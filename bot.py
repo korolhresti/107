@@ -1359,15 +1359,26 @@ async def news_digest_task():
 async def startup_event():
     await get_db_pool()
     await create_tables()
-    # Замість dp.start_polling(bot) використовуємо webhook
+    
     if WEBHOOK_URL and API_TOKEN:
-        webhook_full_url = f"{WEBHOOK_URL}{API_TOKEN}"
-        await bot.set_webhook(url=webhook_full_url)
-        logger.info(f"Webhook set to {webhook_full_url}")
+        # Використовуємо фіксований шлях для вебхука
+        webhook_full_url = f"{WEBHOOK_URL.rstrip('/')}/telegram_webhook"
+        logger.info(f"Attempting to set webhook to: {webhook_full_url}") # Додано логування
+        try:
+            await asyncio.sleep(5) # Додано затримку в 5 секунд
+            await bot.set_webhook(url=webhook_full_url)
+            logger.info(f"Webhook successfully set to {webhook_full_url}")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
+            # Важливо: Якщо вебхук не вдалося встановити, додаток не зможе отримувати оновлення.
+            # Тому краще дозволити йому впасти, щоб проблема була помічена.
+            raise # Перевикликаємо виняток, щоб зупинити запуск, якщо вебхук не вдалося встановити
     else:
-        logger.warning("WEBHOOK_URL or BOT_TOKEN not set. Polling might be used if not configured externally.")
-        # Fallback to polling if webhook not configured, though generally not recommended for production
-        asyncio.create_task(dp.start_polling(bot))
+        logger.warning("WEBHOOK_URL or BOT_TOKEN not set. Webhook will not be configured.")
+        # Якщо WEBHOOK_URL або BOT_TOKEN не встановлені, додаток не буде працювати коректно з вебхуками.
+        # В цьому випадку, якщо ви хочете використовувати polling як запасний варіант, його потрібно увімкнути тут.
+        # Однак для продакшену на Render рекомендується використовувати вебхуки.
+        # asyncio.create_task(dp.start_polling(bot)) # Закоментовано, щоб уникнути конфлікту, якщо вебхук не налаштований.
 
     asyncio.create_task(news_repost_task())
     asyncio.create_task(news_digest_task())
@@ -1479,7 +1490,7 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
             if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
             return
 
-@app.post(f"/{API_TOKEN}")
+@app.post("/telegram_webhook") # Змінено шлях для вебхука
 async def telegram_webhook(request: Request):
     update = await request.json()
     await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
