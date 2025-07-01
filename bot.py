@@ -13,11 +13,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold, hlink
-from aiogram.client.default import DefaultBotProperties # Імпортуємо DefaultBotProperties
+from aiogram.client.default import DefaultBotProperties
 
 from aiohttp import ClientSession
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool # Змінено імпорт
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
@@ -37,7 +38,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Telegram AI News Bot API", version="1.0.0")
-# Оновлюємо ініціалізацію Bot
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 router = Router()
@@ -58,7 +58,8 @@ async def get_db_pool():
     global db_pool
     if db_pool is None:
         try:
-            db_pool = psycopg.AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
+            # Використовуємо psycopg_pool.AsyncConnectionPool
+            db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
             async with db_pool.connection() as conn: await conn.execute("SELECT 1")
             print("DB pool initialized.")
         except Exception as e:
@@ -476,12 +477,12 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
         reply_markup = get_news_keyboard(news_obj.id)
         
         if news_obj.image_url:
-            try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_notification=True)
+            try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, reply_markup=reply_markup, disable_notification=True)
             except Exception as e:
                 logger.warning(f"Failed to send photo for news {news_id}: {e}. Sending without photo.")
-                msg = await bot.send_message(chat_id, message_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
+                msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
         else:
-            msg = await bot.send_message(chat_id, message_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
+            msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
         
         await dp.fsm.get_context(chat_id, chat_id).update_data(last_message_id=msg.message_id)
         await mark_news_as_viewed(chat_id, news_id)
@@ -1054,10 +1055,25 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
         query = "SELECT id FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
         params = []
         if source_ids:
-            query += " AND source_url IN (SELECT link FROM sources WHERE id = ANY($1))"
-            params.append(source_ids)
+            # Отримаємо лінки джерел за їхніми ID
+            source_links_data = await conn.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
+            source_links = [s['link'] for s in source_links_data]
+            if source_links:
+                query += " AND source_url = ANY($2)" # Використовуємо ANY для масиву лінків
+                params.append(source_links)
+            else: # Якщо обрані ID джерел не відповідають жодним лінкам, то новин не буде
+                await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
+                await callback.answer()
+                return
+
         query += " ORDER BY published_at DESC"
+        # Передаємо user_id як окремий параметр, якщо він потрібен для подальших умов
+        # Наразі, якщо source_ids порожній, params буде порожнім. Якщо є source_ids, то params[0] - це source_links.
+        # Тому потрібно коректно обробляти параметри.
+        # Оскільки query += " AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = $2)" був у digest_task,
+        # тут його немає. Якщо потрібно фільтрувати переглянуті новини, його слід додати.
         news_records = await conn.fetch(query, *params)
+
 
         if not news_records:
             await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
@@ -1238,11 +1254,17 @@ async def news_digest_task():
                     query = "SELECT id, title, content, source_url, image_url, published_at, ai_summary FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
                     params = []
                     if source_ids:
-                        query += " AND source_url IN (SELECT link FROM sources WHERE id = ANY($1))"
-                        params.append(source_ids)
+                        # Отримаємо лінки джерел за їхніми ID для фільтрації
+                        source_links_data = await conn.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
+                        source_links = [s['link'] for s in source_links_data]
+                        if source_links:
+                            query += " AND source_url = ANY($2)"
+                            params.append(source_links)
+                        else: # Якщо обрані ID джерел не відповідають жодним лінкам, то для цього користувача новин не буде
+                            continue # Переходимо до наступного користувача
                     
-                    query += " AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = $2) ORDER BY published_at DESC LIMIT 5"
-                    params.append(user_id)
+                    # Додаємо фільтрацію за переглянутими новинами
+                    query += f" AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = {user_id}) ORDER BY published_at DESC LIMIT 5"
                     
                     news_items_data = await conn.fetch(query, *params)
                     
@@ -1260,7 +1282,7 @@ async def news_digest_task():
                             await mark_news_as_viewed(user_id, news_obj.id)
                         
                         try:
-                            await bot.send_message(user_id, digest_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                            await bot.send_message(user_id, digest_text, disable_web_page_preview=True)
                             logger.info(f"Digest sent to user {user_id}.")
                         except Exception as e:
                             logger.error(f"Failed to send digest to user {user_id}: {e}")
