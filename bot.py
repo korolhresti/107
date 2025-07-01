@@ -5,7 +5,7 @@ import json
 import os
 from typing import List, Optional, Dict, Any
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -13,6 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold, hlink
+from aiogram.client.default import DefaultBotProperties # Імпортуємо DefaultBotProperties
 
 from aiohttp import ClientSession
 import psycopg
@@ -36,7 +37,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Telegram AI News Bot API", version="1.0.0")
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+# Оновлюємо ініціалізацію Bot
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
@@ -154,11 +156,11 @@ async def create_tables():
                 content TEXT NOT NULL,
                 source_url TEXT,
                 image_url TEXT,
-                published_at TIMESTAMP WITH TIME ZONE,
-                lang VARCHAR(10) NOT NULL,
+                published_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                lang VARCHAR(10) NOT NULL DEFAULT 'uk',
                 ai_summary TEXT,
                 ai_classified_topics JSONB,
-                moderation_status VARCHAR(50) DEFAULT 'pending_review',
+                moderation_status VARCHAR(50) DEFAULT 'approved', -- 'pending_review', 'approved', 'declined'
                 expires_at TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 days')
             );
         """)
@@ -167,7 +169,7 @@ async def create_tables():
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(id),
                 feed_name TEXT NOT NULL,
-                filters JSONB,
+                filters JSONB, -- Зберігатиме JSON об'єкт з фільтрами (наприклад, {"source_ids": [1, 2, 3]})
                 UNIQUE (user_id, feed_name)
             );
         """)
@@ -176,14 +178,14 @@ async def create_tables():
                 id SERIAL PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
                 link TEXT UNIQUE NOT NULL,
-                type TEXT DEFAULT 'web',
-                status TEXT DEFAULT 'active'
+                type TEXT DEFAULT 'web', -- 'web', 'telegram', 'rss', 'twitter'
+                status TEXT DEFAULT 'active' -- 'active', 'inactive', 'blocked'
             );
         """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_news_views (
-                user_id BIGINT NOT NULL,
-                news_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL REFERENCES users(id),
+                news_id INTEGER NOT NULL REFERENCES news(id),
                 viewed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, news_id)
             );
@@ -193,7 +195,7 @@ async def create_tables():
                 user_id BIGINT PRIMARY KEY REFERENCES users(id),
                 viewed_news_count INT DEFAULT 0,
                 last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                viewed_topics JSONB DEFAULT '[]'::jsonb
+                viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігатиме список тем, які користувач переглядав
             );
         """)
         logger.info("Tables checked/created.")
@@ -583,7 +585,6 @@ async def toggle_auto_notifications(callback: CallbackQuery):
         status_text = "увімкнено" if new_status else "вимкнено"
         await callback.message.answer(f"🔔 Автоматичні сповіщення про новини {status_text}.")
         
-        # Update settings menu keyboard
         user = await get_user(user_id)
         toggle_btn_text = "🔔 Вимкнути автосповіщення" if user.auto_notifications else "🔕 Увімкнути автосповіщення"
         kb = InlineKeyboardBuilder()
@@ -1100,8 +1101,8 @@ async def process_news_url(message: Message, state: FSMContext):
     user_id = message.from_user.id
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        user_stats = await conn.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
-        user_interests = user_stats['viewed_topics'] if user_stats else []
+        user_stats_rec = await conn.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
+        user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
     is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
@@ -1193,8 +1194,8 @@ async def news_repost_task():
 
             pool = await get_db_pool()
             async with pool.connection() as conn:
-                user_stats = await conn.fetchrow("SELECT viewed_topics FROM user_stats LIMIT 1")
-                user_interests = user_stats['viewed_topics'] if user_stats else []
+                user_stats_rec = await conn.fetchrow("SELECT viewed_topics FROM user_stats LIMIT 1")
+                user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
             is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
@@ -1359,31 +1360,6 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
         res = await conn.execute("DELETE FROM news WHERE id = $1", news_id)
         if res == "DELETE 0": raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
         return
-
-@app.post("/api/admin/news/{news_id}/approve")
-async def approve_admin_news_api(news_id: int, api_key: str = Depends(get_api_key)):
-    pool = await get_db_pool()
-    async with pool.connection() as conn:
-        updated_rec = await conn.fetchrow("UPDATE news SET moderation_status = 'approved' WHERE id = $1 RETURNING *", news_id)
-        if not updated_rec: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
-        return News(**updated_rec).__dict__
-
-@app.get("/api/admin/reports")
-async def get_admin_reports_api(api_key: str = Depends(get_api_key)):
-    pool = await get_db_pool()
-    async with pool.connection() as conn:
-        general_stats = await get_admin_stats_api(api_key)
-        news_status_counts_raw = await conn.fetch("SELECT moderation_status, COUNT(*) FROM news GROUP BY moderation_status")
-        news_status_counts = {item['moderation_status']: item['count'] for item in news_status_counts_raw}
-        active_users_data = await conn.fetch("""SELECT id, username, first_name, last_active FROM users WHERE last_active >= NOW() - INTERVAL '7 days' ORDER BY last_active DESC LIMIT 10""")
-        return {
-            "general_stats": general_stats,
-            "news_status_counts": news_status_counts,
-            "product_status_counts": {}, # Removed
-            "active_users_last_7_days": [dict(u) for u in active_users_data],
-            "top_sellers": [], # Removed
-            "top_buyers": [] # Removed
-        }
 
 @app.post(f"/{API_TOKEN}")
 async def telegram_webhook(request: Request):
