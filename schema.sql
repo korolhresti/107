@@ -1,105 +1,169 @@
--- Схема бази даних для Telegram AI News Bot
+-- patch_schema.sql - Скрипт для оновлення існуючої схеми бази даних, якщо schema.sql не був виконаний повністю.
 
--- Таблиця користувачів
-CREATE TABLE IF NOT EXISTS users (
-    id BIGINT PRIMARY KEY,
-    username VARCHAR(255),
-    first_name VARCHAR(255),
-    last_name VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    is_admin BOOLEAN DEFAULT FALSE,
-    last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    language VARCHAR(10) DEFAULT 'uk',
-    auto_notifications BOOLEAN DEFAULT FALSE,
-    digest_frequency VARCHAR(50) DEFAULT 'daily'
+-- Додавання/оновлення таблиці custom_feeds, якщо її немає або потрібно оновити
+CREATE TABLE IF NOT EXISTS custom_feeds (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    feed_name TEXT NOT NULL,
+    filters JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, feed_name)
 );
 
--- Таблиця новин
+-- Додавання відсутніх стовпців до таблиці users
+-- (Якщо ці стовпці вже існують, ALTER TABLE ADD COLUMN IF NOT EXISTS просто пропустить їх)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS safe_mode BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS current_feed_id INT REFERENCES custom_feeds(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expires_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS level INT DEFAULT 1;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS badges TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE users ADD COLUMN IF NOT EXISTS inviter_id INT REFERENCES users(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_notifications BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS view_mode TEXT DEFAULT 'manual';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT; -- Додаємо telegram_id для users.html
+
+-- Додавання/оновлення таблиці news, якщо її немає
 CREATE TABLE IF NOT EXISTS news (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     source_url TEXT,
     image_url TEXT,
-    published_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    lang VARCHAR(10) NOT NULL DEFAULT 'uk',
+    published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    lang TEXT DEFAULT 'uk',
     ai_summary TEXT,
     ai_classified_topics JSONB,
-    moderation_status VARCHAR(50) DEFAULT 'approved', -- 'pending_review', 'approved', 'declined'
-    expires_at TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 days')
+    moderation_status TEXT DEFAULT 'pending_review',
+    expires_at TIMESTAMP
 );
 
--- Таблиця для користувацьких фільтрів (наприклад, джерела новин)
-CREATE TABLE IF NOT EXISTS custom_feeds (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    feed_name TEXT NOT NULL,
-    filters JSONB, -- Зберігатиме JSON об'єкт з фільтрами (наприклад, {"source_ids": [1, 2, 3]})
-    UNIQUE (user_id, feed_name)
-);
-
--- Таблиця джерел новин
+-- Додавання/оновлення таблиці sources
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     link TEXT UNIQUE NOT NULL,
-    type TEXT DEFAULT 'web', -- 'web', 'telegram', 'rss', 'twitter'
-    status TEXT DEFAULT 'active' -- 'active', 'inactive', 'blocked'
+    type TEXT DEFAULT 'web',
+    status TEXT DEFAULT 'active'
 );
 
--- Таблиця для відстеження переглянутих новин користувачами
+-- Додавання/оновлення таблиці user_news_views
 CREATE TABLE IF NOT EXISTS user_news_views (
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    news_id INTEGER NOT NULL REFERENCES news(id),
-    viewed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    user_id INT REFERENCES users(id),
+    news_id INT REFERENCES news(id),
+    viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, news_id)
 );
 
--- Таблиця для статистики користувачів
+-- Додавання/оновлення таблиці user_stats
 CREATE TABLE IF NOT EXISTS user_stats (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id),
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id) UNIQUE,
     viewed_news_count INT DEFAULT 0,
-    last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігатиме список тем, які користувач переглядав
+    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Додавання початкових даних до таблиці sources, якщо вона порожня
-INSERT INTO sources (name, link, type, status)
-SELECT 'BBC News Україна', 'https://www.bbc.com/ukrainian', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'BBC News Україна');
+-- Додавання колонки viewed_topics до user_stats, якщо її немає
+ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS viewed_topics JSONB DEFAULT '[]'::jsonb;
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Укрінформ', 'https://www.ukrinform.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Укрінформ');
+-- Додавання/оновлення таблиці comments
+CREATE TABLE IF NOT EXISTS comments (
+    id SERIAL PRIMARY KEY,
+    news_id INT REFERENCES news(id),
+    user_id INT REFERENCES users(id),
+    comment_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    moderation_status TEXT DEFAULT 'pending_review'
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Ліга.net', 'https://www.liga.net/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Ліга.net');
+-- Додавання/оновлення таблиці reports
+CREATE TABLE IF NOT EXISTS reports (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    report_type TEXT NOT NULL, -- 'news', 'comment', 'user', 'source'
+    target_id INT,
+    reason TEXT,
+    status TEXT DEFAULT 'pending', -- 'pending', 'reviewed', 'resolved'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Цензор.НЕТ', 'https://censor.net/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Цензор.НЕТ');
+-- Додавання/оновлення таблиці feedback
+CREATE TABLE IF NOT EXISTS feedback (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    feedback_text TEXT NOT NULL,
+    rating INT, -- 1-5
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'new' -- 'new', 'reviewed', 'addressed'
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Економічна правда', 'https://www.epravda.com.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Економічна правда');
+-- Додавання/оновлення таблиці summaries (для AI-резюме, якщо вони зберігаються окремо)
+CREATE TABLE IF NOT EXISTS summaries (
+    id SERIAL PRIMARY KEY,
+    news_id INT REFERENCES news(id) UNIQUE,
+    ai_summary_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'РБК-Україна', 'https://www.rbc.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'РБК-Україна');
+-- Додавання/оновлення таблиці blocks
+CREATE TABLE IF NOT EXISTS blocks (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    block_type TEXT NOT NULL, -- 'user', 'source', 'topic'
+    value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, block_type, value)
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Obozrevatel', 'https://www.obozrevatel.com/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Obozrevatel');
+-- Додавання/оновлення таблиці bookmarks
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    news_id INT REFERENCES news(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, news_id)
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'NV', 'https://nv.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'NV');
+-- Додавання/оновлення таблиці invites
+CREATE TABLE IF NOT EXISTS invites (
+    id SERIAL PRIMARY KEY,
+    inviter_id INT REFERENCES users(id),
+    invite_code TEXT UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    accepted_at TIMESTAMP
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'ZN.UA', 'https://zn.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'ZN.UA');
+-- Додавання/оновлення таблиці admin_actions
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id SERIAL PRIMARY KEY,
+    admin_user_id INT,
+    action_type TEXT NOT NULL,
+    target_id INT,
+    details JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-INSERT INTO sources (name, link, type, status)
-SELECT 'Українська правда', 'https://www.pravda.com.ua/', 'web', 'active'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE name = 'Українська правда');
+-- Додавання/оновлення таблиці source_stats
+CREATE TABLE IF NOT EXISTS source_stats (
+    id SERIAL PRIMARY KEY,
+    source_id INT REFERENCES sources(id) UNIQUE,
+    publication_count INT DEFAULT 0,
+    avg_rating REAL DEFAULT 0.0,
+    report_count INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Створення або перестворення індексів. IF NOT EXISTS тут особливо корисний.
+CREATE INDEX IF NOT EXISTS idx_news_published_expires_moderation ON news (published_at DESC, expires_at, moderation_status);
+-- CREATE INDEX IF NOT EXISTS idx_filters_user_id ON filters (user_id); -- filters table not defined
+CREATE INDEX IF NOT EXISTS idx_blocks_user_type_value ON blocks (user_id, block_type, value);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_stats_user_id ON user_stats (user_id);
+CREATE INDEX IF NOT EXISTS idx_comments_news_id ON comments (news_id);
+CREATE INDEX IF NOT EXISTS idx_user_news_views_user_news_id ON user_news_views (user_id, news_id);
+CREATE INDEX IF NOT EXISTS idx_reports_user_id_target_id ON reports (user_id, target_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback (user_id);
+CREATE INDEX IF NOT EXISTS idx_invites_inviter_id ON invites (inviter_id);
+CREATE INDEX IF NOT EXISTS idx_admin_actions_admin_user_id ON admin_actions (admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_source_stats_source_id ON source_stats (source_id);
