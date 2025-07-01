@@ -1255,7 +1255,7 @@ async def handle_help_menu(callback: CallbackQuery):
     await callback.answer()
 
 async def news_repost_task():
-    repost_interval = 1.2
+    repost_interval = 300 # Збільшено інтервал до 300 секунд (5 хвилин)
     while True:
         try:
             mock_title = f"AI News Update {datetime.now().strftime('%H:%M:%S')}"
