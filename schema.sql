@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS reports (
     status TEXT DEFAULT 'pending', -- 'pending', 'reviewed', 'resolved'
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+-- Додавання колонки target_id до reports, якщо її немає
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS target_id INT;
+
 
 -- Додавання/оновлення таблиці feedback
 CREATE TABLE IF NOT EXISTS feedback (
@@ -133,6 +136,8 @@ CREATE TABLE IF NOT EXISTS invites (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     accepted_at TIMESTAMP
 );
+-- Додавання колонки inviter_id до invites, якщо її немає
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS inviter_id INT REFERENCES users(id);
 
 -- Додавання/оновлення таблиці admin_actions
 CREATE TABLE IF NOT EXISTS admin_actions (
