@@ -244,7 +244,6 @@ async def add_news(news: News) -> News:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Removed json.dumps() for ai_classified_topics as psycopg handles Python list to JSONB conversion
             await cur.execute(
                 """INSERT INTO news (title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics, moderation_status, expires_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
@@ -267,7 +266,6 @@ async def update_user_filters(user_id: int, filters: Dict[str, Any]):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Removed json.dumps() for filters as psycopg handles Python dict to JSONB conversion
             await cur.execute(
                 """INSERT INTO custom_feeds (user_id, feed_name, filters)
                 VALUES (%s, 'default_feed', %s::jsonb)
@@ -305,7 +303,6 @@ async def update_user_viewed_topics(user_id: int, topics: List[str]):
             current_topics_rec = await cur.fetchone()
             current_topics = current_topics_rec['viewed_topics'] if current_topics_rec and current_topics_rec['viewed_topics'] else []
             updated_topics = list(set(current_topics + topics))
-            # Removed json.dumps() for viewed_topics as psycopg handles Python list to JSONB conversion
             await cur.execute("UPDATE user_stats SET viewed_topics = %s::jsonb WHERE user_id = %s", (updated_topics, user_id))
 
 async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> str:
@@ -957,74 +954,21 @@ async def handle_sentiment_trend_analysis_callback(callback: CallbackQuery):
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             related_news_items = []
             if main_news_obj.ai_classified_topics:
-                topic_conditions = [f"ai_classified_topics @> %s::jsonb" for _ in main_news_obj.ai_classified_topics] # Use %s for each topic
-                # Ensure each topic is dumped separately if needed by psycopg, or pass as list directly
-                params = [json.dumps([t]) for t in main_news_obj.ai_classified_topics] # Wrap each topic in a list for @> operator
-                
-                # Adjusting the query to use ANY if multiple topics are passed as a single array, or multiple conditions
-                # For `ai_classified_topics @> '["topic"]'::jsonb`, it expects a JSON string of an array.
-                # If we pass a Python list, psycopg will convert it.
-                # Let's assume ai_classified_topics is a Python list of strings.
-                # The @> operator checks if the left JSONB contains the right JSONB.
-                # So if main_news_obj.ai_classified_topics is ['A', 'B'], we want to check if news.ai_classified_topics contains 'A' OR 'B'.
-                # The current approach `ai_classified_topics @> '[\"{t}\"]'::jsonb` is correct for checking if the column contains a specific single topic.
-                # If we want to check if it contains *any* of the topics, we need to build the OR clause.
-                
-                # Re-evaluating the topic filtering logic for related news:
-                # The goal is to find news items that share *any* of the classified topics of the main news.
-                # The current approach of building `topic_conditions` is correct for this.
-                # The parameters should be the individual topic strings, or JSON-dumped single-element arrays if @> expects that.
-                # Given the error was `malformed array literal`, it implies that a string like '["topic"]' was being interpreted as a PG array, not JSONB.
-                # Psycopg's default JSON/JSONB handling should be sufficient if we pass Python objects.
-
-                # Let's simplify and pass the Python list directly for the `ANY` operator if the column was a text array,
-                # but since it's JSONB, the current `ai_classified_topics @> '["topic"]'` is the correct syntax for JSONB containment.
-                # The issue is how the parameter `t` is passed.
-                # If `ai_classified_topics` is a Python list, `psycopg` should handle it.
-                # If `ai_classified_topics` is `jsonb`, `ai_classified_topics @> %s` where `%s` is `json.dumps(['topic'])` is correct.
-                # The error was in `add_news` and `update_user_viewed_topics` where `json.dumps` was used for insertion/update.
-                # For querying, `json.dumps` might still be needed if `psycopg` doesn't convert Python strings like 'topic' directly to JSONB for `@>`.
-
-                # Let's stick to the previous fix for `add_news` and `update_user_viewed_topics` (removing json.dumps).
-                # For the query, `ai_classified_topics @> '["topic"]'::jsonb` is a valid way to check for a topic.
-                # The `psycopg` library should handle the parameter substitution correctly.
-                # The issue might be if `main_news_obj.ai_classified_topics` itself is not a valid Python list of strings.
-                # Let's ensure `ai_classify_topics` returns a proper list of strings. It already does.
-
-                # The `topic_conditions` list is built with string literals.
-                # `await cur.execute(f"""... AND ({' OR '.join(topic_conditions)}) ...""", (news_id,))`
-                # This means the `topic_conditions` are *interpolated directly into the query string*, not passed as parameters.
-                # This is a SQL injection risk and also bypasses `psycopg`'s parameter handling for JSONB.
-
-                # Correct way for `JSONB` containment check with parameters:
-                # `SELECT ... WHERE ai_classified_topics @> %s` where %s is `json.dumps(["topic_name"])`
-                # Or, if checking for ANY of multiple topics:
-                # `SELECT ... WHERE ai_classified_topics ?| ARRAY[%s]` where %s is `",".join(['topic1', 'topic2'])`
-                # Or, using multiple `?` for individual string checks:
-                # `SELECT ... WHERE ai_classified_topics ? %s OR ai_classified_topics ? %s`
-
-                # The simplest and safest way for `JSONB` containing *any* of a list of strings is using `?|` operator.
-                # `ai_classified_topics ?| ARRAY['topic1', 'topic2']`
-                # This requires passing the topics as a PostgreSQL array of TEXT.
-
-                # Let's change `ai_analyze_sentiment_trend` to use `?|` operator for `JSONB` array containment.
-
-                if main_news_obj.ai_classified_topics:
-                    # Convert Python list of topics to a format suitable for PostgreSQL ARRAY
-                    # psycopg should convert Python list of strings to PostgreSQL TEXT array.
-                    # The `?|` operator checks if the JSONB array contains any of the strings in the TEXT array.
-                    await cur.execute(f"""
-                        SELECT id, title, content, ai_summary, lang, published_at
-                        FROM news
-                        WHERE id != %s
-                        AND moderation_status = 'approved'
-                        AND expires_at > NOW()
-                        AND published_at >= NOW() - INTERVAL '30 days'
-                        AND ai_classified_topics ?| %s
-                        ORDER BY published_at ASC LIMIT 5
-                    """, (news_id, main_news_obj.ai_classified_topics)) # Pass Python list directly
-                    related_news_records = await cur.fetchall()
-                    related_news_items = [News(id=r['id'], title=r['title'], content=r['content'], lang=r['lang'], published_at=r['published_at'], ai_summary=r['ai_summary']) for r in related_news_records]
+                # Use the ?| operator to check if the JSONB array contains ANY of the provided strings
+                # The second argument to execute needs to be a tuple or list of parameters.
+                # psycopg will automatically convert a Python list of strings to a PostgreSQL TEXT array for the ?| operator.
+                await cur.execute(f"""
+                    SELECT id, title, content, ai_summary, lang, published_at
+                    FROM news
+                    WHERE id != %s
+                    AND moderation_status = 'approved'
+                    AND expires_at > NOW()
+                    AND published_at >= NOW() - INTERVAL '30 days'
+                    AND ai_classified_topics ?| %s
+                    ORDER BY published_at ASC LIMIT 5
+                """, (news_id, main_news_obj.ai_classified_topics))
+                related_news_records = await cur.fetchall()
+                related_news_items = [News(id=r['id'], title=r['title'], content=r['content'], lang=r['lang'], published_at=r['published_at'], ai_summary=r['ai_summary']) for r in related_news_records]
             ai_sentiment_trend = await ai_analyze_sentiment_trend(main_news_obj, related_news_items)
             await callback.message.answer(f"📊 <b>Аналіз тренду настроїв для новини (ID: {news_id}):</b>\n\n{ai_sentiment_trend}", parse_mode=ParseMode.HTML)
     await callback.answer()
@@ -1471,6 +1415,20 @@ async def shutdown_event():
             logger.error(f"Failed to delete webhook: {e}")
     logger.info("FastAPI app shut down.")
 
+@app.post("/telegram_webhook") # Changed webhook path
+async def telegram_webhook(request: Request):
+    logger.info("Received a request on /telegram_webhook")
+    try:
+        update = await request.json()
+        logger.info(f"Received Telegram update: {update}")
+        await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
+        logger.info("Successfully processed Telegram update.")
+    except Exception as e:
+        logger.error(f"Error processing Telegram webhook: {e}", exc_info=True)
+        # Return a 200 OK even on error to prevent Telegram from retrying endlessly
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
 @app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(get_api_key)])
 async def get_dashboard():
     with open("dashboard.html", "r", encoding="utf-8") as f: return HTMLResponse(content=f.read())
@@ -1567,8 +1525,16 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
 
 @app.post("/telegram_webhook") # Changed webhook path
 async def telegram_webhook(request: Request):
-    update = await request.json()
-    await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
+    logger.info("Отримано запит на /telegram_webhook")
+    try:
+        update = await request.json()
+        logger.info(f"Отримано оновлення Telegram: {update}")
+        await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
+        logger.info("Успішно оброблено оновлення Telegram.")
+    except Exception as e:
+        logger.error(f"Помилка обробки вебхука Telegram: {e}", exc_info=True)
+        # Повертаємо 200 OK навіть у разі помилки, щоб Telegram не намагався повторно надсилати оновлення
+        return {"ok": False, "error": str(e)}
     return {"ok": True}
 
 @router.message()
