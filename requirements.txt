@@ -4,4 +4,6 @@ uvicorn[standard]==0.29.0
 python-dotenv==1.0.1
 psycopg[binary]==3.2.9
 aiohttp==3.9.5
-psycopg-pool==3.2.1 # Додано
+psycopg-pool==3.2.1
+gtts==2.5.1 # Додано
+croniter==2.0.7 # Додано

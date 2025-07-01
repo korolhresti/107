@@ -18,12 +18,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiohttp import ClientSession
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool # Змінено імпорт
+from psycopg_pool import AsyncConnectionPool
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from gtts import gTTS # Для генерації аудіо
 
 load_dotenv()
 
@@ -58,7 +59,6 @@ async def get_db_pool():
     global db_pool
     if db_pool is None:
         try:
-            # Використовуємо psycopg_pool.AsyncConnectionPool
             db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
             async with db_pool.connection() as conn: await conn.execute("SELECT 1")
             print("DB pool initialized.")
@@ -204,90 +204,99 @@ async def create_tables():
 async def get_user(user_id: int) -> Optional[User]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        rec = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
-        return User(**rec) if rec else None
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            rec = await cur.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
+            return User(**rec) if rec else None
 
 async def create_or_update_user(tg_user: Any) -> User:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        user = await get_user(tg_user.id)
-        if user:
-            await conn.execute("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE id = $1", tg_user.id)
-            user.last_active = datetime.now()
-            return user
-        else:
-            is_admin = tg_user.id in ADMIN_IDS
-            await conn.execute(
-                """INSERT INTO users (id, username, first_name, last_name, is_admin, created_at, last_active, language)
-                VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $6)""",
-                tg_user.id, tg_user.username, tg_user.first_name, tg_user.last_name, is_admin, tg_user.language_code
-            )
-            await conn.execute("INSERT INTO user_stats (user_id, last_active) VALUES ($1, CURRENT_TIMESTAMP)", tg_user.id)
-            new_user = User(id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name,
-                            last_name=tg_user.last_name, is_admin=is_admin, language=tg_user.language_code)
-            logger.info(f"New user: {new_user.username or new_user.first_name} (ID: {new_user.id})")
-            return new_user
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            user = await get_user(tg_user.id) # This calls get_user which uses cursor
+            if user:
+                await cur.execute("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE id = $1", tg_user.id)
+                user.last_active = datetime.now()
+                return user
+            else:
+                is_admin = tg_user.id in ADMIN_IDS
+                await cur.execute(
+                    """INSERT INTO users (id, username, first_name, last_name, is_admin, created_at, last_active, language)
+                    VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $6)""",
+                    tg_user.id, tg_user.username, tg_user.first_name, tg_user.last_name, is_admin, tg_user.language_code
+                )
+                await cur.execute("INSERT INTO user_stats (user_id, last_active) VALUES ($1, CURRENT_TIMESTAMP)", tg_user.id)
+                new_user = User(id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name,
+                                last_name=tg_user.last_name, is_admin=is_admin, language=tg_user.language_code)
+                logger.info(f"New user: {new_user.username or new_user.first_name} (ID: {new_user.id})")
+                return new_user
 
 async def get_news(news_id: int) -> Optional[News]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        rec = await conn.fetchrow("SELECT * FROM news WHERE id = $1", news_id)
-        return News(**rec) if rec else None
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            rec = await cur.fetchrow("SELECT * FROM news WHERE id = $1", news_id)
+            return News(**rec) if rec else None
 
 async def add_news(news: News) -> News:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        res = await conn.fetchrow(
-            """INSERT INTO news (title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics, moderation_status, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id""",
-            news.title, news.content, news.source_url, news.image_url, news.published_at, news.lang,
-            news.ai_summary, json.dumps(news.ai_classified_topics), news.moderation_status, news.expires_at
-        )
-        news.id = res['id']
-        return news
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            res = await cur.fetchrow(
+                """INSERT INTO news (title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics, moderation_status, expires_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id""",
+                news.title, news.content, news.source_url, news.image_url, news.published_at, news.lang,
+                news.ai_summary, json.dumps(news.ai_classified_topics), news.moderation_status, news.expires_at
+            )
+            news.id = res['id']
+            return news
 
 async def get_user_filters(user_id: int) -> Dict[str, Any]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        feed = await conn.fetchrow("SELECT filters FROM custom_feeds WHERE user_id = $1 AND feed_name = 'default_feed'", user_id)
-        return feed['filters'] if feed else {}
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            feed = await cur.fetchrow("SELECT filters FROM custom_feeds WHERE user_id = $1 AND feed_name = 'default_feed'", user_id)
+            return feed['filters'] if feed else {}
 
 async def update_user_filters(user_id: int, filters: Dict[str, Any]):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        await conn.execute(
-            """INSERT INTO custom_feeds (user_id, feed_name, filters)
-            VALUES ($1, 'default_feed', $2::jsonb)
-            ON CONFLICT (user_id, feed_name) DO UPDATE SET filters = EXCLUDED.filters""",
-            user_id, json.dumps(filters)
-        )
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            await cur.execute(
+                """INSERT INTO custom_feeds (user_id, feed_name, filters)
+                VALUES ($1, 'default_feed', $2::jsonb)
+                ON CONFLICT (user_id, feed_name) DO UPDATE SET filters = EXCLUDED.filters""",
+                user_id, json.dumps(filters)
+            )
 
 async def get_sources() -> List[Dict[str, Any]]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        return await conn.fetch("SELECT id, name, link, type FROM sources ORDER BY name")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            return await cur.fetch("SELECT id, name, link, type FROM sources ORDER BY name")
 
 async def mark_news_as_viewed(user_id: int, news_id: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        await conn.execute(
-            """INSERT INTO user_news_views (user_id, news_id) VALUES ($1, $2) ON CONFLICT (user_id, news_id) DO NOTHING""",
-            user_id, news_id
-        )
-        await conn.execute(
-            """INSERT INTO user_stats (user_id, viewed_news_count, last_active)
-            VALUES ($1, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT (user_id) DO UPDATE SET viewed_news_count = user_stats.viewed_news_count + 1, last_active = CURRENT_TIMESTAMP""",
-            user_id
-        )
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            await cur.execute(
+                """INSERT INTO user_news_views (user_id, news_id) VALUES ($1, $2) ON CONFLICT (user_id, news_id) DO NOTHING""",
+                user_id, news_id
+            )
+            await cur.execute(
+                """INSERT INTO user_stats (user_id, viewed_news_count, last_active)
+                VALUES ($1, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) DO UPDATE SET viewed_news_count = user_stats.viewed_news_count + 1, last_active = CURRENT_TIMESTAMP""",
+                user_id
+            )
 
 async def update_user_viewed_topics(user_id: int, topics: List[str]):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        current_topics_rec = await conn.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
-        current_topics = current_topics_rec['viewed_topics'] if current_topics_rec and current_topics_rec['viewed_topics'] else []
-        updated_topics = list(set(current_topics + topics))
-        await conn.execute("UPDATE user_stats SET viewed_topics = $1::jsonb WHERE user_id = $2", json.dumps(updated_topics), user_id)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            current_topics_rec = await cur.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
+            current_topics = current_topics_rec['viewed_topics'] if current_topics_rec and current_topics_rec['viewed_topics'] else []
+            updated_topics = list(set(current_topics + topics))
+            await cur.execute("UPDATE user_stats SET viewed_topics = $1::jsonb WHERE user_id = $2", json.dumps(updated_topics), user_id)
 
 async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> str:
     if not GEMINI_API_KEY: return "AI functions unavailable. GEMINI_API_KEY not set."
@@ -456,37 +465,38 @@ def get_news_keyboard(news_id: int):
 async def send_news_to_user(chat_id: int, news_id: int, current_index: int, total_count: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_record = await conn.fetchrow("SELECT id, title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics FROM news WHERE id = $1", news_id)
-        if not news_record:
-            await bot.send_message(chat_id, "Новина не знайдена.")
-            return
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_record = await cur.fetchrow("SELECT id, title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics FROM news WHERE id = $1", news_id)
+            if not news_record:
+                await bot.send_message(chat_id, "Новина не знайдена.")
+                return
 
-        news_obj = News(id=news_record['id'], title=news_record['title'], content=news_record['content'],
-                        source_url=news_record['source_url'], image_url=news_record['image_url'],
-                        published_at=news_record['published_at'], lang=news_record['lang'],
-                        ai_summary=news_record['ai_summary'], ai_classified_topics=news_record['ai_classified_topics'])
+            news_obj = News(id=news_record['id'], title=news_record['title'], content=news_record['content'],
+                            source_url=news_record['source_url'], image_url=news_record['image_url'],
+                            published_at=news_record['published_at'], lang=news_record['lang'],
+                            ai_summary=news_record['ai_summary'], ai_classified_topics=news_record['ai_classified_topics'])
 
-        message_text = (
-            f"<b>{news_obj.title}</b>\n\n"
-            f"{news_obj.content[:1000]}...\n\n"
-            f"<i>Опубліковано: {news_obj.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n"
-            f"<i>Новина {current_index + 1} з {total_count}</i>"
-        )
-        if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
-        
-        reply_markup = get_news_keyboard(news_obj.id)
-        
-        if news_obj.image_url:
-            try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, reply_markup=reply_markup, disable_notification=True)
-            except Exception as e:
-                logger.warning(f"Failed to send photo for news {news_id}: {e}. Sending without photo.")
+            message_text = (
+                f"<b>{news_obj.title}</b>\n\n"
+                f"{news_obj.content[:1000]}...\n\n"
+                f"<i>Опубліковано: {news_obj.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n"
+                f"<i>Новина {current_index + 1} з {total_count}</i>"
+            )
+            if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
+            
+            reply_markup = get_news_keyboard(news_obj.id)
+            
+            if news_obj.image_url:
+                try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, reply_markup=reply_markup, disable_notification=True)
+                except Exception as e:
+                    logger.warning(f"Failed to send photo for news {news_id}: {e}. Sending without photo.")
+                    msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
+            else:
                 msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
-        else:
-            msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
-        
-        await dp.fsm.get_context(chat_id, chat_id).update_data(last_message_id=msg.message_id)
-        await mark_news_as_viewed(chat_id, news_id)
-        if news_obj.ai_classified_topics: await update_user_viewed_topics(chat_id, news_obj.ai_classified_topics)
+            
+            await dp.fsm.get_context(chat_id, chat_id).update_data(last_message_id=msg.message_id)
+            await mark_news_as_viewed(chat_id, news_id)
+            if news_obj.ai_classified_topics: await update_user_viewed_topics(chat_id, news_obj.ai_classified_topics)
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
@@ -575,25 +585,26 @@ async def toggle_auto_notifications(callback: CallbackQuery):
     user_id = callback.from_user.id
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        user_record = await conn.fetchrow("SELECT auto_notifications FROM users WHERE id = $1", user_id)
-        if not user_record:
-            await callback.message.answer("Користувача не знайдено.")
-            await callback.answer()
-            return
-        new_status = not user_record['auto_notifications']
-        await conn.execute("UPDATE users SET auto_notifications = $1 WHERE id = $2", new_status, user_id)
-        
-        status_text = "увімкнено" if new_status else "вимкнено"
-        await callback.message.answer(f"🔔 Автоматичні сповіщення про новини {status_text}.")
-        
-        user = await get_user(user_id)
-        toggle_btn_text = "🔔 Вимкнути автосповіщення" if user.auto_notifications else "🔕 Увімкнути автосповіщення"
-        kb = InlineKeyboardBuilder()
-        kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
-        kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
-        kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
-        kb.adjust(1)
-        await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            user_record = await cur.fetchrow("SELECT auto_notifications FROM users WHERE id = $1", user_id)
+            if not user_record:
+                await callback.message.answer("Користувача не знайдено.")
+                await callback.answer()
+                return
+            new_status = not user_record['auto_notifications']
+            await cur.execute("UPDATE users SET auto_notifications = $1 WHERE id = $2", new_status, user_id)
+            
+            status_text = "увімкнено" if new_status else "вимкнено"
+            await callback.message.answer(f"🔔 Автоматичні сповіщення про новини {status_text}.")
+            
+            user = await get_user(user_id)
+            toggle_btn_text = "🔔 Вимкнути автосповіщення" if user.auto_notifications else "🔕 Увімкнути автосповіщення"
+            kb = InlineKeyboardBuilder()
+            kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
+            kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
+            kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
+            kb.adjust(1)
+            await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
     await callback.answer()
 
 @router.callback_query(F.data == "set_news_sources_filter")
@@ -652,8 +663,9 @@ async def save_source_filters(callback: CallbackQuery, state: FSMContext):
     if selected_source_ids:
         pool = await get_db_pool()
         async with pool.connection() as conn:
-            sources_data = await conn.fetch("SELECT name FROM sources WHERE id = ANY($1)", selected_source_ids)
-            selected_names = [s['name'] for s in sources_data]
+            async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+                sources_data = await cur.fetch("SELECT name FROM sources WHERE id = ANY($1)", selected_source_ids)
+                selected_names = [s['name'] for s in sources_data]
         await callback.message.edit_text(f"Ваші фільтри джерел збережено: {', '.join(selected_names)}.\nВи можете переглянути новини за допомогою /my_news.")
     else:
         await callback.message.edit_text("Ви не обрали жодного джерела. Новини будуть відображатися без фільтрації за джерелами.")
@@ -707,19 +719,20 @@ async def handle_ai_summary_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину не знайдено.")
-            await callback.answer()
-            return
-        await callback.message.answer("⏳ Генерую резюме за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        summary = await ai_summarize_news(news_item['title'], news_item['content'])
-        if summary:
-            await conn.execute("UPDATE news SET ai_summary = $1 WHERE id = $2", summary, news_id)
-            await callback.message.answer(f"📝 <b>AI-резюме новини (ID: {news_id}):</b>\n\n{summary}")
-        else:
-            await callback.message.answer("❌ Не вдалося згенерувати резюме.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.answer()
+                return
+            await callback.message.answer("⏳ Генерую резюме за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            summary = await ai_summarize_news(news_item['title'], news_item['content'])
+            if summary:
+                await cur.execute("UPDATE news SET ai_summary = $1 WHERE id = $2", summary, news_id)
+                await callback.message.answer(f"📝 <b>AI-резюме новини (ID: {news_id}):</b>\n\n{summary}")
+            else:
+                await callback.message.answer("❌ Не вдалося згенерувати резюме.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("translate_"))
@@ -727,23 +740,24 @@ async def handle_translate_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[1])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, lang FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину не знайдено.")
-            await callback.answer()
-            return
-        target_lang = 'en' if news_item['lang'] == 'uk' else 'uk'
-        await callback.message.answer(f"⏳ Перекладаю новину на {target_lang.upper()} за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        translated_title = await ai_translate_news(news_item['title'], target_lang)
-        translated_content = await ai_translate_news(news_item['content'], target_lang)
-        if translated_title and translated_content:
-            await callback.message.answer(
-                f"🌐 <b>Переклад новини (ID: {news_id}) на {target_lang.upper()}:</b>\n\n"
-                f"<b>{translated_title}</b>\n\n{translated_content}"
-            )
-        else:
-            await callback.message.answer("❌ Не вдалося перекласти новину.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, lang FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.answer()
+                return
+            target_lang = 'en' if news_item['lang'] == 'uk' else 'uk'
+            await callback.message.answer(f"⏳ Перекладаю новину на {target_lang.upper()} за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            translated_title = await ai_translate_news(news_item['title'], target_lang)
+            translated_content = await ai_translate_news(news_item['content'], target_lang)
+            if translated_title and translated_content:
+                await callback.message.answer(
+                    f"🌐 <b>Переклад новини (ID: {news_id}) на {target_lang.upper()}:</b>\n\n"
+                    f"<b>{translated_title}</b>\n\n{translated_content}"
+                )
+            else:
+                await callback.message.answer("❌ Не вдалося перекласти новину.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("ask_news_ai_"))
@@ -765,24 +779,25 @@ async def process_news_question(message: Message, state: FSMContext):
         return
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item_data = await conn.fetchrow("SELECT title, content, lang FROM news WHERE id = $1", news_id)
-        if not news_item_data:
-            await message.answer("Новину не знайдено.")
-            await state.clear()
-            return
-        news_item = News(id=news_id, title=news_item_data['title'], content=news_item_data['content'],
-                         lang=news_item_data['lang'], published_at=datetime.now())
-        chat_history = data.get('ask_news_ai_history', [])
-        chat_history.append({"role": "user", "parts": [{"text": question}]})
-        await message.answer("⏳ Обробляю ваше питання за допомогою AI...")
-        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-        ai_response = await ai_answer_news_question(news_item, question, chat_history)
-        if ai_response:
-            await message.answer(f"<b>AI відповідає:</b>\n\n{ai_response}")
-            chat_history.append({"role": "model", "parts": [{"text": ai_response}]})
-            await state.update_data(ask_news_ai_history=chat_history)
-        else:
-            await message.answer("❌ Не вдалося відповісти на ваше питання.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item_data = await cur.fetchrow("SELECT title, content, lang FROM news WHERE id = $1", news_id)
+            if not news_item_data:
+                await message.answer("Новину не знайдено.")
+                await state.clear()
+                return
+            news_item = News(id=news_id, title=news_item_data['title'], content=news_item_data['content'],
+                             lang=news_item_data['lang'], published_at=datetime.now())
+            chat_history = data.get('ask_news_ai_history', [])
+            chat_history.append({"role": "user", "parts": [{"text": question}]})
+            await message.answer("⏳ Обробляю ваше питання за допомогою AI...")
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+            ai_response = await ai_answer_news_question(news_item, question, chat_history)
+            if ai_response:
+                await message.answer(f"<b>AI відповідає:</b>\n\n{ai_response}")
+                chat_history.append({"role": "model", "parts": [{"text": ai_response}]})
+                await state.update_data(ask_news_ai_history=chat_history)
+            else:
+                await message.answer("❌ Не вдалося відповісти на ваше питання.")
     await message.answer("Продовжуйте ставити питання або введіть /cancel для завершення діалогу.")
 
 @router.callback_query(F.data.startswith("extract_entities_"))
@@ -790,18 +805,19 @@ async def handle_extract_entities_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину не знайдено.")
-            await callback.answer()
-            return
-        await callback.message.answer("⏳ Витягую ключові сутності за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        entities = await ai_extract_entities(news_item['content'])
-        if entities:
-            await callback.message.answer(f"🧑‍🤝‍🧑 <b>Ключові особи/сутності в новині (ID: {news_id}):</b>\n\n{entities}")
-        else:
-            await callback.message.answer("❌ Не вдалося витягнути сутності.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.answer()
+                return
+            await callback.message.answer("⏳ Витягую ключові сутності за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            entities = await ai_extract_entities(news_item['content'])
+            if entities:
+                await callback.message.answer(f"🧑‍🤝‍🧑 <b>Ключові особи/сутності в новині (ID: {news_id}):</b>\n\n{entities}")
+            else:
+                await callback.message.answer("❌ Не вдалося витягнути сутності.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("classify_topics_"))
@@ -809,23 +825,24 @@ async def handle_classify_topics_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item_record = await conn.fetchrow("SELECT content, ai_classified_topics FROM news WHERE id = $1", news_id)
-        if not news_item_record:
-            await callback.message.answer("❌ Новину не знайдено.")
-            await callback.answer()
-            return
-        topics = news_item_record['ai_classified_topics']
-        if not topics:
-            await callback.message.answer("⏳ Класифікую новину за темами за допомогою AI...")
-            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-            topics = await ai_classify_topics(news_item_record['content'])
-            if topics: await conn.execute("UPDATE news SET ai_classified_topics = $1 WHERE id = $2", json.dumps(topics), news_id)
-            else: topics = ["Не вдалося визначити теми."]
-        if topics:
-            topics_str = ", ".join(topics)
-            await callback.message.answer(f"🏷️ <b>Класифікація за темами для новини (ID: {news_id}):</b>\n\n{topics_str}")
-        else:
-            await callback.message.answer("❌ Не вдалося класифікувати новину за темами.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item_record = await cur.fetchrow("SELECT content, ai_classified_topics FROM news WHERE id = $1", news_id)
+            if not news_item_record:
+                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.answer()
+                return
+            topics = news_item_record['ai_classified_topics']
+            if not topics:
+                await callback.message.answer("⏳ Класифікую новину за темами за допомогою AI...")
+                await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+                topics = await ai_classify_topics(news_item_record['content'])
+                if topics: await cur.execute("UPDATE news SET ai_classified_topics = $1 WHERE id = $2", json.dumps(topics), news_id)
+                else: topics = ["Не вдалося визначити теми."]
+            if topics:
+                topics_str = ", ".join(topics)
+                await callback.message.answer(f"🏷️ <b>Класифікація за темами для новини (ID: {news_id}):</b>\n\n{topics_str}")
+            else:
+                await callback.message.answer("❌ Не вдалося класифікувати новину за темами.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("explain_term_"))
@@ -847,18 +864,19 @@ async def process_explain_term_query(message: Message, state: FSMContext):
         return
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await message.answer("Новину не знайдено.")
-            await state.clear()
-            return
-        await message.answer(f"⏳ Пояснюю термін '{term}' за допомогою AI...")
-        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-        explanation = await ai_explain_term(term, news_item['content'])
-        if explanation:
-            await message.answer(f"❓ <b>Пояснення терміну '{term}' (Новина ID: {news_id}):</b>\n\n{explanation}")
-        else:
-            await message.answer("❌ Не вдалося пояснити термін.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await message.answer("Новину не знайдено.")
+                await state.clear()
+                return
+            await message.answer(f"⏳ Пояснюю термін '{term}' за допомогою AI...")
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+            explanation = await ai_explain_term(term, news_item['content'])
+            if explanation:
+                await message.answer(f"❓ <b>Пояснення терміну '{term}' (Новина ID: {news_id}):</b>\n\n{explanation}")
+            else:
+                await message.answer("❌ Не вдалося пояснити термін.")
     await state.clear()
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
@@ -880,18 +898,19 @@ async def process_fact_to_check(message: Message, state: FSMContext):
         return
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await message.answer("Новину не знайдено.")
-            await state.clear()
-            return
-        await message.answer(f"⏳ Перевіряю факт: '{fact_to_check}' за допомогою AI...")
-        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-        fact_check_result = await ai_fact_check(fact_to_check, news_item['content'])
-        if fact_check_result:
-            await message.answer(f"✅ <b>Перевірка факту для новини (ID: {news_id}):</b>\n\n{fact_check_result}")
-        else:
-            await message.answer("❌ Не вдалося перевірити факт.")
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT content FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await message.answer("Новину не знайдено.")
+                await state.clear()
+                return
+            await message.answer(f"⏳ Перевіряю факт: '{fact_to_check}' за допомогою AI...")
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+            fact_check_result = await ai_fact_check(fact_to_check, news_item['content'])
+            if fact_check_result:
+                await message.answer(f"✅ <b>Перевірка факту для новини (ID: {news_id}):</b>\n\n{fact_check_result}")
+            else:
+                await message.answer("❌ Не вдалося перевірити факт.")
     await state.clear()
 
 @router.callback_query(F.data.startswith("sentiment_trend_analysis_"))
@@ -899,21 +918,22 @@ async def handle_sentiment_trend_analysis_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[3])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        main_news_record = await conn.fetchrow("SELECT id, title, content, ai_summary, ai_classified_topics, lang, published_at FROM news WHERE id = $1", news_id)
-        if not main_news_record:
-            await callback.message.answer("❌ Новину для аналізу не знайдено.")
-            await callback.answer()
-            return
-        main_news_obj = News(id=main_news_record['id'], title=main_news_record['title'], content=main_news_record['content'], lang=main_news_record['lang'], published_at=main_news_record['published_at'], ai_summary=main_news_record['ai_summary'], ai_classified_topics=main_news_record['ai_classified_topics'])
-        await callback.message.answer("⏳ Аналізую тренд настроїв за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        related_news_items = []
-        if main_news_obj.ai_classified_topics:
-            topic_conditions = [f"ai_classified_topics @> '[\"{t}\"]'::jsonb" for t in main_news_obj.ai_classified_topics]
-            related_news_records = await conn.fetch(f"""SELECT id, title, content, ai_summary, lang, published_at FROM news WHERE id != $1 AND moderation_status = 'approved' AND expires_at > NOW() AND published_at >= NOW() - INTERVAL '30 days' AND ({' OR '.join(topic_conditions)}) ORDER BY published_at ASC LIMIT 5""", news_id)
-            related_news_items = [News(id=r['id'], title=r['title'], content=r['content'], lang=r['lang'], published_at=r['published_at'], ai_summary=r['ai_summary']) for r in related_news_records]
-        ai_sentiment_trend = await ai_analyze_sentiment_trend(main_news_obj, related_news_items)
-        await callback.message.answer(f"📊 <b>Аналіз тренду настроїв для новини (ID: {news_id}):</b>\n\n{ai_sentiment_trend}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            main_news_record = await cur.fetchrow("SELECT id, title, content, ai_summary, ai_classified_topics, lang, published_at FROM news WHERE id = $1", news_id)
+            if not main_news_record:
+                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.answer()
+                return
+            main_news_obj = News(id=main_news_record['id'], title=main_news_record['title'], content=main_news_record['content'], lang=main_news_record['lang'], published_at=main_news_record['published_at'], ai_summary=main_news_record['ai_summary'], ai_classified_topics=main_news_record['ai_classified_topics'])
+            await callback.message.answer("⏳ Аналізую тренд настроїв за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            related_news_items = []
+            if main_news_obj.ai_classified_topics:
+                topic_conditions = [f"ai_classified_topics @> '[\"{t}\"]'::jsonb" for t in main_news_obj.ai_classified_topics]
+                related_news_records = await cur.fetch(f"""SELECT id, title, content, ai_summary, lang, published_at FROM news WHERE id != $1 AND moderation_status = 'approved' AND expires_at > NOW() AND published_at >= NOW() - INTERVAL '30 days' AND ({' OR '.join(topic_conditions)}) ORDER BY published_at ASC LIMIT 5""", news_id)
+                related_news_items = [News(id=r['id'], title=r['title'], content=r['content'], lang=r['lang'], published_at=r['published_at'], ai_summary=r['ai_summary']) for r in related_news_records]
+            ai_sentiment_trend = await ai_analyze_sentiment_trend(main_news_obj, related_news_items)
+            await callback.message.answer(f"📊 <b>Аналіз тренду настроїв для новини (ID: {news_id}):</b>\n\n{ai_sentiment_trend}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("bias_detection_"))
@@ -921,15 +941,16 @@ async def handle_bias_detection_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину для аналізу не знайдено.")
-            await callback.answer()
-            return
-        await callback.message.answer("⏳ Аналізую новину на наявність упереджень за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        ai_bias_analysis = await ai_detect_bias_in_news(news_item['title'], news_item['content'], news_item['ai_summary'])
-        await callback.message.answer(f"🔍 <b>Аналіз на упередженість для новини (ID: {news_id}):</b>\n\n{ai_bias_analysis}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.answer()
+                return
+            await callback.message.answer("⏳ Аналізую новину на наявність упереджень за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            ai_bias_analysis = await ai_detect_bias_in_news(news_item['title'], news_item['content'], news_item['ai_summary'])
+            await callback.message.answer(f"🔍 <b>Аналіз на упередженість для новини (ID: {news_id}):</b>\n\n{ai_bias_analysis}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("audience_summary_"))
@@ -961,14 +982,15 @@ async def process_audience_type_selection(callback: CallbackQuery, state: FSMCon
     await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину для резюме не знайдено.")
-            await state.clear()
-            await callback.answer()
-            return
-        ai_summary_for_audience = await ai_summarize_for_audience(news_item['title'], news_item['content'], news_item['ai_summary'], selected_audience)
-        await callback.message.answer(f"📝 <b>Резюме для аудиторії: {selected_audience} (Новина ID: {news_id}):</b>\n\n{ai_summary_for_audience}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину для резюме не знайдено.")
+                await state.clear()
+                await callback.answer()
+                return
+            ai_summary_for_audience = await ai_summarize_for_audience(news_item['title'], news_item['content'], news_item['ai_summary'], selected_audience)
+            await callback.message.answer(f"📝 <b>Резюме для аудиторії: {selected_audience} (Новина ID: {news_id}):</b>\n\n{ai_summary_for_audience}", parse_mode=ParseMode.HTML)
     await state.clear()
     await callback.answer()
 
@@ -983,15 +1005,16 @@ async def handle_historical_analogues_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину для аналізу не знайдено.")
-            await callback.answer()
-            return
-        await callback.message.answer("⏳ Шукаю історичні аналоги за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        ai_historical_analogues = await ai_find_historical_analogues(news_item['title'], news_item['content'], news_item['ai_summary'])
-        await callback.message.answer(f"📜 <b>Історичні аналоги для новини (ID: {news_id}):</b>\n\n{ai_historical_analogues}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.answer()
+                return
+            await callback.message.answer("⏳ Шукаю історичні аналоги за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            ai_historical_analogues = await ai_find_historical_analogues(news_item['title'], news_item['content'], news_item['ai_summary'])
+            await callback.message.answer(f"📜 <b>Історичні аналоги для новини (ID: {news_id}):</b>\n\n{ai_historical_analogues}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("impact_analysis_"))
@@ -999,15 +1022,16 @@ async def handle_impact_analysis_callback(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
-        if not news_item:
-            await callback.message.answer("❌ Новину для аналізу впливу не знайдено.")
-            await callback.answer()
-            return
-        await callback.message.answer("⏳ Аналізую потенційний вплив новини за допомогою AI...")
-        await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
-        ai_impact_analysis = await ai_analyze_impact(news_item['title'], news_item['content'], news_item['ai_summary'])
-        await callback.message.answer(f"💥 <b>Аналіз впливу новини (ID: {news_id}):</b>\n\n{ai_impact_analysis}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id)
+            if not news_item:
+                await callback.message.answer("❌ Новину для аналізу впливу не знайдено.")
+                await callback.answer()
+                return
+            await callback.message.answer("⏳ Аналізую потенційний вплив новини за допомогою AI...")
+            await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+            ai_impact_analysis = await ai_analyze_impact(news_item['title'], news_item['content'], news_item['ai_summary'])
+            await callback.message.answer(f"💥 <b>Аналіз впливу новини (ID: {news_id}):</b>\n\n{ai_impact_analysis}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("what_if_scenario_"))
@@ -1035,13 +1059,14 @@ async def process_what_if_query(message: Message, state: FSMContext):
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_item = await conn.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id_for_context)
-        if not news_item:
-            await message.answer("❌ Новину не знайдено. Спробуйте з іншою новиною.")
-            await state.clear()
-            return
-        ai_what_if_scenario = await ai_generate_what_if_scenario(news_item['title'], news_item['content'], news_item['ai_summary'], what_if_question)
-        await message.answer(f"🤔 <b>Сценарій 'Що якби...' для новини (ID: {news_id_for_context}):</b>\n\n{ai_what_if_scenario}", parse_mode=ParseMode.HTML)
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_item = await cur.fetchrow("SELECT title, content, ai_summary FROM news WHERE id = $1", news_id_for_context)
+            if not news_item:
+                await message.answer("❌ Новину не знайдено. Спробуйте з іншою новиною.")
+                await state.clear()
+                return
+            ai_what_if_scenario = await ai_generate_what_if_scenario(news_item['title'], news_item['content'], news_item['ai_summary'], what_if_question)
+            await message.answer(f"🤔 <b>Сценарій 'Що якби...' для новини (ID: {news_id_for_context}):</b>\n\n{ai_what_if_scenario}", parse_mode=ParseMode.HTML)
     await state.clear()
 
 @router.callback_query(F.data == "my_news")
@@ -1052,40 +1077,36 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
     
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        query = "SELECT id FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
-        params = []
-        if source_ids:
-            # Отримаємо лінки джерел за їхніми ID
-            source_links_data = await conn.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
-            source_links = [s['link'] for s in source_links_data]
-            if source_links:
-                query += " AND source_url = ANY($2)" # Використовуємо ANY для масиву лінків
-                params.append(source_links)
-            else: # Якщо обрані ID джерел не відповідають жодним лінкам, то новин не буде
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            query = "SELECT id FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
+            params = []
+            if source_ids:
+                # Отримаємо лінки джерел за їхніми ID
+                source_links_data = await cur.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
+                source_links = [s['link'] for s in source_links_data]
+                if source_links:
+                    query += " AND source_url = ANY($2)" # Використовуємо ANY для масиву лінків
+                    params.append(source_links)
+                else: # Якщо обрані ID джерел не відповідають жодним лінкам, то новин не буде
+                    await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
+                    await callback.answer()
+                    return
+
+            query += " ORDER BY published_at DESC"
+            news_records = await cur.fetch(query, *params)
+
+
+            if not news_records:
                 await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
                 await callback.answer()
                 return
-
-        query += " ORDER BY published_at DESC"
-        # Передаємо user_id як окремий параметр, якщо він потрібен для подальших умов
-        # Наразі, якщо source_ids порожній, params буде порожнім. Якщо є source_ids, то params[0] - це source_links.
-        # Тому потрібно коректно обробляти параметри.
-        # Оскільки query += " AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = $2)" був у digest_task,
-        # тут його немає. Якщо потрібно фільтрувати переглянуті новини, його слід додати.
-        news_records = await conn.fetch(query, *params)
-
-
-        if not news_records:
-            await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
+            news_ids = [r['id'] for r in news_records]
+            await state.update_data(news_ids=news_ids, news_index=0)
+            await state.set_state(NewsBrowse.Browse_news)
+            current_news_id = news_ids[0]
+            await callback.message.edit_text("Завантажую новину...")
+            await send_news_to_user(callback.message.chat.id, current_news_id, 0, len(news_ids))
             await callback.answer()
-            return
-        news_ids = [r['id'] for r in news_records]
-        await state.update_data(news_ids=news_ids, news_index=0)
-        await state.set_state(NewsBrowse.Browse_news)
-        current_news_id = news_ids[0]
-        await callback.message.edit_text("Завантажую новину...")
-        await send_news_to_user(callback.message.chat.id, current_news_id, 0, len(news_ids))
-        await callback.answer()
 
 @router.callback_query(NewsBrowse.Browse_news, F.data == "next_news")
 async def process_next_news(callback: CallbackQuery, state: FSMContext):
@@ -1117,8 +1138,9 @@ async def process_news_url(message: Message, state: FSMContext):
     user_id = message.from_user.id
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        user_stats_rec = await conn.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
-        user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            user_stats_rec = await cur.fetchrow("SELECT viewed_topics FROM user_stats WHERE user_id = $1", user_id)
+            user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
     is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
@@ -1210,8 +1232,9 @@ async def news_repost_task():
 
             pool = await get_db_pool()
             async with pool.connection() as conn:
-                user_stats_rec = await conn.fetchrow("SELECT viewed_topics FROM user_stats LIMIT 1")
-                user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
+                async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+                    user_stats_rec = await cur.fetchrow("SELECT viewed_topics FROM user_stats LIMIT 1")
+                    user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
             is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
@@ -1244,48 +1267,49 @@ async def news_digest_task():
         try:
             pool = await get_db_pool()
             async with pool.connection() as conn:
-                users = await conn.fetch("SELECT id, language, auto_notifications FROM users WHERE auto_notifications = TRUE AND digest_frequency = 'daily'")
-                for user_data in users:
-                    user_id = user_data['id']
-                    user_lang = user_data['language']
-                    user_filters = await get_user_filters(user_id)
-                    source_ids = user_filters.get('source_ids', [])
-                    
-                    query = "SELECT id, title, content, source_url, image_url, published_at, ai_summary FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
-                    params = []
-                    if source_ids:
-                        # Отримаємо лінки джерел за їхніми ID для фільтрації
-                        source_links_data = await conn.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
-                        source_links = [s['link'] for s in source_links_data]
-                        if source_links:
-                            query += " AND source_url = ANY($2)"
-                            params.append(source_links)
-                        else: # Якщо обрані ID джерел не відповідають жодним лінкам, то для цього користувача новин не буде
-                            continue # Переходимо до наступного користувача
-                    
-                    # Додаємо фільтрацію за переглянутими новинами
-                    query += f" AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = {user_id}) ORDER BY published_at DESC LIMIT 5"
-                    
-                    news_items_data = await conn.fetch(query, *params)
-                    
-                    if news_items_data:
-                        digest_text = f"📰 <b>Ваш щоденний дайджест новин ({now.strftime('%d.%m.%Y')}):</b>\n\n"
-                        for news_rec in news_items_data:
-                            news_obj = News(id=news_rec['id'], title=news_rec['title'], content=news_rec['content'],
-                                            source_url=news_rec['source_url'], image_url=news_rec['image_url'],
-                                            published_at=news_rec['published_at'], lang=user_lang, ai_summary=news_rec['ai_summary'])
-                            
-                            summary_to_use = news_obj.ai_summary or news_obj.content[:200] + "..."
-                            digest_text += f"• <b>{news_obj.title}</b>\n{summary_to_use}\n"
-                            if news_obj.source_url: digest_text += f"🔗 {hlink('Читати', news_obj.source_url)}\n\n"
-                            
-                            await mark_news_as_viewed(user_id, news_obj.id)
+                async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+                    users = await cur.fetch("SELECT id, language, auto_notifications FROM users WHERE auto_notifications = TRUE AND digest_frequency = 'daily'")
+                    for user_data in users:
+                        user_id = user_data['id']
+                        user_lang = user_data['language']
+                        user_filters = await get_user_filters(user_id) # This function already uses a cursor
+                        source_ids = user_filters.get('source_ids', [])
                         
-                        try:
-                            await bot.send_message(user_id, digest_text, disable_web_page_preview=True)
-                            logger.info(f"Digest sent to user {user_id}.")
-                        except Exception as e:
-                            logger.error(f"Failed to send digest to user {user_id}: {e}")
+                        query = "SELECT id, title, content, source_url, image_url, published_at, ai_summary FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
+                        params = []
+                        if source_ids:
+                            # Отримаємо лінки джерел за їхніми ID для фільтрації
+                            source_links_data = await cur.fetch("SELECT link FROM sources WHERE id = ANY($1)", source_ids)
+                            source_links = [s['link'] for s in source_links_data]
+                            if source_links:
+                                query += " AND source_url = ANY($2)"
+                                params.append(source_links)
+                            else: # Якщо обрані ID джерел не відповідають жодним лінкам, то для цього користувача новин не буде
+                                continue # Переходимо до наступного користувача
+                        
+                        # Додаємо фільтрацію за переглянутими новинами
+                        query += f" AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = {user_id}) ORDER BY published_at DESC LIMIT 5"
+                        
+                        news_items_data = await cur.fetch(query, *params)
+                        
+                        if news_items_data:
+                            digest_text = f"📰 <b>Ваш щоденний дайджест новин ({now.strftime('%d.%m.%Y')}):</b>\n\n"
+                            for news_rec in news_items_data:
+                                news_obj = News(id=news_rec['id'], title=news_rec['title'], content=news_rec['content'],
+                                                source_url=news_rec['source_url'], image_url=news_rec['image_url'],
+                                                published_at=news_rec['published_at'], lang=user_lang, ai_summary=news_rec['ai_summary'])
+                                
+                                summary_to_use = news_obj.ai_summary or news_obj.content[:200] + "..."
+                                digest_text += f"• <b>{news_obj.title}</b>\n{summary_to_use}\n"
+                                if news_obj.source_url: digest_text += f"🔗 {hlink('Читати', news_obj.source_url)}\n\n"
+                                
+                                await mark_news_as_viewed(user_id, news_obj.id)
+                            
+                            try:
+                                await bot.send_message(user_id, digest_text, disable_web_page_preview=True)
+                                logger.info(f"Digest sent to user {user_id}.")
+                            except Exception as e:
+                                logger.error(f"Failed to send digest to user {user_id}: {e}")
         except Exception as e:
             logger.error(f"Error in news digest task: {e}")
 
@@ -1320,33 +1344,36 @@ async def get_reports_page():
 async def get_admin_stats_api(api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        total_users = (await conn.fetchrow("SELECT COUNT(*) FROM users"))['count']
-        total_news = (await conn.fetchrow("SELECT COUNT(*) FROM news"))['count']
-        active_users_count = (await conn.fetchrow("SELECT COUNT(DISTINCT id) FROM users WHERE last_active >= NOW() - INTERVAL '7 days'"))['count']
-        return {
-            "total_users": total_users,
-            "total_news": total_news,
-            "total_products": 0, # Removed product functionality
-            "total_transactions": 0, # Removed product functionality
-            "total_reviews": 0, # Removed product functionality
-            "active_users_count": active_users_count
-        }
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            total_users = (await cur.fetchrow("SELECT COUNT(*) FROM users"))['count']
+            total_news = (await cur.fetchrow("SELECT COUNT(*) FROM news"))['count']
+            active_users_count = (await cur.fetchrow("SELECT COUNT(DISTINCT id) FROM users WHERE last_active >= NOW() - INTERVAL '7 days'"))['count']
+            return {
+                "total_users": total_users,
+                "total_news": total_news,
+                "total_products": 0, # Removed product functionality
+                "total_transactions": 0, # Removed product functionality
+                "total_reviews": 0, # Removed product functionality
+                "active_users_count": active_users_count
+            }
 
 @app.get("/api/admin/users")
 async def get_admin_users_api(limit: int = 20, offset: int = 0, api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        users_data = await conn.fetch("SELECT id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2", limit, offset)
-        total_count = (await conn.fetchrow("SELECT COUNT(*) FROM users"))['count']
-        return {"users": [User(**u).__dict__ for u in users_data], "total_count": total_count}
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            users_data = await cur.fetch("SELECT id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2", limit, offset)
+            total_count = (await cur.fetchrow("SELECT COUNT(*) FROM users"))['count']
+            return {"users": [User(**u).__dict__ for u in users_data], "total_count": total_count}
 
 @app.get("/api/admin/news")
 async def get_admin_news_api(limit: int = 20, offset: int = 0, api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        news_data = await conn.fetch("SELECT id, title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics, moderation_status, expires_at FROM news ORDER BY published_at DESC LIMIT $1 OFFSET $2", limit, offset)
-        total_count = (await conn.fetchrow("SELECT COUNT(*) FROM news"))['count']
-        return {"news": [News(**n).__dict__ for n in news_data], "total_count": total_count}
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            news_data = await cur.fetch("SELECT id, title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics, moderation_status, expires_at FROM news ORDER BY published_at DESC LIMIT $1 OFFSET $2", limit, offset)
+            total_count = (await cur.fetchrow("SELECT COUNT(*) FROM news"))['count']
+            return {"news": [News(**n).__dict__ for n in news_data], "total_count": total_count}
 
 @app.post("/api/admin/news")
 async def create_admin_news_api(news_data: Dict[str, Any], api_key: str = Depends(get_api_key)):
@@ -1360,28 +1387,30 @@ async def create_admin_news_api(news_data: Dict[str, Any], api_key: str = Depend
 async def update_admin_news_api(news_id: int, news_data: Dict[str, Any], api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        set_clauses = []
-        params = []
-        for k, v in news_data.items():
-            if k in ['title', 'content', 'source_url', 'image_url', 'lang', 'moderation_status', 'expires_at']:
-                set_clauses.append(f"{k} = ${len(params) + 1}")
-                params.append(v)
-            elif k == 'ai_classified_topics':
-                set_clauses.append(f"{k} = ${len(params) + 1}::jsonb")
-                params.append(json.dumps(v))
-        if not set_clauses: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
-        params.append(news_id)
-        updated_rec = await conn.fetchrow(f"UPDATE news SET {', '.join(set_clauses)} WHERE id = ${len(params)} RETURNING *", *params)
-        if not updated_rec: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
-        return News(**updated_rec).__dict__
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            set_clauses = []
+            params = []
+            for k, v in news_data.items():
+                if k in ['title', 'content', 'source_url', 'image_url', 'lang', 'moderation_status', 'expires_at']:
+                    set_clauses.append(f"{k} = ${len(params) + 1}")
+                    params.append(v)
+                elif k == 'ai_classified_topics':
+                    set_clauses.append(f"{k} = ${len(params) + 1}::jsonb")
+                    params.append(json.dumps(v))
+            if not set_clauses: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+            params.append(news_id)
+            updated_rec = await cur.fetchrow(f"UPDATE news SET {', '.join(set_clauses)} WHERE id = ${len(params)} RETURNING *", *params)
+            if not updated_rec: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
+            return News(**updated_rec).__dict__
 
 @app.delete("/api/admin/news/{news_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        res = await conn.execute("DELETE FROM news WHERE id = $1", news_id)
-        if res == "DELETE 0": raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
-        return
+        async with conn.cursor(row_factory=dict_row) as cur: # Use cursor
+            res = await cur.execute("DELETE FROM news WHERE id = $1", news_id)
+            if res == "DELETE 0": raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
+            return
 
 @app.post(f"/{API_TOKEN}")
 async def telegram_webhook(request: Request):
