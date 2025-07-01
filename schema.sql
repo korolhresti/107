@@ -38,10 +38,13 @@ CREATE TABLE IF NOT EXISTS news (
     moderation_status TEXT DEFAULT 'pending_review',
     expires_at TIMESTAMP
 );
--- Додавання колонки source_url до news, якщо її немає
+-- Додавання відсутніх стовпців до таблиці news (якщо вони не були додані раніше)
 ALTER TABLE news ADD COLUMN IF NOT EXISTS source_url TEXT;
--- Додавання колонки image_url до news, якщо її немає
 ALTER TABLE news ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS ai_summary TEXT;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS ai_classified_topics JSONB;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS moderation_status TEXT DEFAULT 'approved';
+ALTER TABLE news ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 days');
 
 
 -- Додавання/оновлення таблиці sources
