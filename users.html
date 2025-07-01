@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель адміністратора - Користувачі</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .container { max-width: 96%; margin: 2rem auto; padding: 1.5rem; background-color: #ffffff; border-radius: 0.75rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
+        th { background-color: #e0f2f7; font-weight: 600; color: #1f2937; }
+        .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 500; cursor: pointer; transition: background-color 0.2s; }
+        .btn-primary { background-color: #3b82f6; color: white; border: none; }
+        .btn-primary:hover { background-color: #2563eb; }
+        .btn-secondary { background-color: #6b7280; color: white; border: none; }
+        .btn-secondary:hover { background-color: #4b5563; }
+        .pagination-controls { display: flex; justify-content: center; align-items: center; margin-top: 1.5rem; }
+        .pagination-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .hidden { display: none; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background-color: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2); max-width: 500px; width: 90%; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center mb-8 text-blue-800">Панель адміністратора - Користувачі</h1>
+
+        <div class="card mb-6">
+            <h2 class="text-2xl font-semibold mb-4 text-blue-700">Налаштування API</h2>
+            <div class="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
+                <input type="password" id="apiKeyInput" placeholder="Введіть ваш Admin API Key" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="loadDataBtn" class="btn btn-primary w-full sm:w-auto">Завантажити дані</button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="min-w-full bg-white rounded-lg shadow-sm">
+                <thead>
+                    <tr>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Ім'я</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Дата реєстрації</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Остання активність</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Адмін</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Мова</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Автосповіщення</th>
+                        <th class="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Частота дайджестів</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody" class="bg-white divide-y divide-gray-200">
+                    <tr><td colspan="9" class="text-center py-4 text-gray-500">Дані відсутні.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pagination-controls">
+            <button id="prevPageBtn" class="btn btn-secondary mr-4" disabled>Попередня</button>
+            <span id="pageInfo" class="text-gray-700">Сторінка 1</span>
+            <button id="nextPageBtn" class="btn btn-secondary ml-4" disabled>Наступна</button>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="alertModal" class="modal hidden">
+        <div class="modal-content">
+            <h3 id="alertTitle" class="text-xl font-bold mb-4">Повідомлення</h3>
+            <p id="alertMessage" class="mb-6"></p>
+            <button id="closeAlertBtn" class="btn btn-primary">ОК</button>
+        </div>
+    </div>
+
+    <script>
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const loadDataBtn = document.getElementById('loadDataBtn');
+        const usersTableBody = document.getElementById('usersTableBody');
+        const prevPageBtn = document.getElementById('prevPageBtn');
+        const nextPageBtn = document.getElementById('nextPageBtn');
+        const pageInfoSpan = document.getElementById('pageInfo');
+
+        const alertModal = document.getElementById('alertModal');
+        const alertTitle = document.getElementById('alertTitle');
+        const alertMessage = document.getElementById('alertMessage');
+        const closeAlertBtn = document.getElementById('closeAlertBtn');
+
+        let currentPage = 0;
+        const usersPerPage = 20; // Matches FastAPI default limit
+
+        function showAlert(message, title = 'Повідомлення', isConfirm = false, onConfirm = null) {
+            alertTitle.textContent = title;
+            alertMessage.textContent = message;
+
+            const existingCancelBtn = alertModal.querySelector('.btn-secondary');
+            if (existingCancelBtn) {
+                existingCancelBtn.remove();
+            }
+            closeAlertBtn.textContent = isConfirm ? 'Підтвердити' : 'ОК';
+
+            const newCloseAlertBtn = closeAlertBtn.cloneNode(true);
+            closeAlertBtn.parentNode.replaceChild(newCloseAlertBtn, closeAlertBtn);
+
+            newCloseAlertBtn.addEventListener('click', () => {
+                alertModal.classList.add('hidden');
+                if (onConfirm && isConfirm) {
+                    onConfirm();
+                }
+            });
+
+            if (isConfirm) {
+                const cancelConfirmBtn = document.createElement('button');
+                cancelConfirmBtn.textContent = 'Скасувати';
+                cancelConfirmBtn.className = 'btn btn-secondary ml-4';
+                cancelConfirmBtn.addEventListener('click', () => {
+                    alertModal.classList.add('hidden');
+                });
+                newCloseAlertBtn.parentNode.insertBefore(cancelConfirmBtn, newCloseAlertBtn);
+            }
+            alertModal.classList.remove('hidden');
+        }
+
+        async function fetchUsers(page = 0) {
+            const apiKey = apiKeyInput.value;
+            if (!apiKey) {
+                showAlert('Будь ласка, введіть API ключ.');
+                return;
+            }
+
+            const offset = page * usersPerPage;
+            try {
+                const response = await fetch(`/api/admin/users?limit=${usersPerPage}&offset=${offset}`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Помилка завантаження користувачів');
+                }
+
+                const data = await response.json();
+                renderUsersTable(data.users);
+                updatePaginationButtons(data.users.length);
+                pageInfoSpan.textContent = `Сторінка ${page + 1}`;
+                currentPage = page;
+
+            } catch (error) {
+                showAlert(`Помилка: ${error.message}`);
+                console.error('Error fetching users:', error);
+            }
+        }
+
+        function renderUsersTable(users) {
+            usersTableBody.innerHTML = '';
+            if (users.length === 0) {
+                usersTableBody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-gray-500">Користувачів не знайдено.</td></tr>';
+                return;
+            }
+            users.forEach(user => {
+                const row = usersTableBody.insertRow();
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.id}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.username || 'N/A'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.first_name || 'N/A'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${new Date(user.created_at).toLocaleString('uk-UA')}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${new Date(user.last_active).toLocaleString('uk-UA')}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.is_admin ? '✅ Так' : '❌ Ні'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.language || 'N/A'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.auto_notifications ? '✅ Так' : '❌ Ні'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${user.digest_frequency || 'N/A'}</td>
+                `;
+            });
+        }
+
+        function updatePaginationButtons(currentUsersCount) {
+            prevPageBtn.disabled = currentPage === 0;
+            nextPageBtn.disabled = currentUsersCount < usersPerPage;
+        }
+
+        loadDataBtn.addEventListener('click', () => fetchUsers(0));
+        prevPageBtn.addEventListener('click', () => fetchUsers(currentPage - 1));
+        nextPageBtn.addEventListener('click', () => fetchUsers(currentPage + 1));
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // No initial fetch, user must enter API key and click load button
+        });
+    </script>
+</body>
+</html>

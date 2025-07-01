@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель керування ботом</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; color: #333; line-height: 1.6; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .card { background-color: #fff; border-radius: 12px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); padding: 24px; margin-bottom: 24px; }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+        th { background-color: #e0f2f7; font-weight: 600; color: #1f2937; }
+        .btn { padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; transition: background-color 0.2s; }
+        .btn-primary { background-color: #3b82f6; color: white; border: none; }
+        .btn-primary:hover { background-color: #2563eb; }
+        .btn-secondary { background-color: #6b7280; color: white; border: none; }
+        .btn-secondary:hover { background-color: #4b5563; }
+        .hidden { display: none; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background-color: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2); max-width: 500px; width: 90%; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center mb-8 text-blue-800">Панель керування ботом</h1>
+
+        <div class="card mb-6">
+            <h2 class="text-2xl font-semibold mb-4 text-blue-700">Налаштування API</h2>
+            <div class="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
+                <input type="password" id="apiKeyInput" placeholder="Введіть ваш Admin API Key" class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="loadDataBtn" class="btn btn-primary w-full sm:w-auto">Завантажити дані</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="text-2xl font-semibold mb-4 text-blue-700">Загальна статистика</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="bg-blue-50 p-6 rounded-lg shadow-sm">
+                    <p class="text-lg font-medium text-blue-600">Всього користувачів:</p>
+                    <p id="totalUsers" class="text-3xl font-bold text-blue-800 mt-2">0</p>
+                </div>
+                <div class="bg-green-50 p-6 rounded-lg shadow-sm">
+                    <p class="text-lg font-medium text-green-600">Всього новин:</p>
+                    <p id="totalNews" class="text-3xl font-bold text-green-800 mt-2">0</p>
+                </div>
+                <div class="bg-yellow-50 p-6 rounded-lg shadow-sm">
+                    <p class="text-lg font-medium text-yellow-600">Активних за 7 днів:</p>
+                    <p id="activeUsers" class="text-3xl font-bold text-yellow-800 mt-2">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="alertModal" class="modal hidden">
+        <div class="modal-content">
+            <h3 id="alertTitle" class="text-xl font-bold mb-4">Повідомлення</h3>
+            <p id="alertMessage" class="mb-6"></p>
+            <button id="closeAlertBtn" class="btn btn-primary">ОК</button>
+        </div>
+    </div>
+
+    <script>
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const loadDataBtn = document.getElementById('loadDataBtn');
+        const totalUsersSpan = document.getElementById('totalUsers');
+        const totalNewsSpan = document.getElementById('totalNews');
+        const activeUsersSpan = document.getElementById('activeUsers');
+
+        const alertModal = document.getElementById('alertModal');
+        const alertTitle = document.getElementById('alertTitle');
+        const alertMessage = document.getElementById('alertMessage');
+        const closeAlertBtn = document.getElementById('closeAlertBtn');
+
+        function showAlert(message, title = 'Повідомлення', isConfirm = false, onConfirm = null) {
+            alertTitle.textContent = title;
+            alertMessage.textContent = message;
+
+            const existingCancelBtn = alertModal.querySelector('.btn-secondary');
+            if (existingCancelBtn) {
+                existingCancelBtn.remove();
+            }
+            closeAlertBtn.textContent = isConfirm ? 'Підтвердити' : 'ОК';
+
+            const newCloseAlertBtn = closeAlertBtn.cloneNode(true);
+            closeAlertBtn.parentNode.replaceChild(newCloseAlertBtn, closeAlertBtn);
+
+            newCloseAlertBtn.addEventListener('click', () => {
+                alertModal.classList.add('hidden');
+                if (onConfirm && isConfirm) {
+                    onConfirm();
+                }
+            });
+
+            if (isConfirm) {
+                const cancelConfirmBtn = document.createElement('button');
+                cancelConfirmBtn.textContent = 'Скасувати';
+                cancelConfirmBtn.className = 'btn btn-secondary ml-4';
+                cancelConfirmBtn.addEventListener('click', () => {
+                    alertModal.classList.add('hidden');
+                });
+                newCloseAlertBtn.parentNode.insertBefore(cancelConfirmBtn, newCloseAlertBtn);
+            }
+            alertModal.classList.remove('hidden');
+        }
+
+        async function fetchStats() {
+            const apiKey = apiKeyInput.value;
+            if (!apiKey) {
+                showAlert('Будь ласка, введіть API ключ.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/admin/stats', {
+                    headers: { 'X-API-Key': apiKey }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Помилка завантаження статистики');
+                }
+
+                const data = await response.json();
+                totalUsersSpan.textContent = data.total_users;
+                totalNewsSpan.textContent = data.total_news;
+                activeUsersSpan.textContent = data.active_users_count;
+
+            } catch (error) {
+                showAlert(`Помилка: ${error.message}`);
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        loadDataBtn.addEventListener('click', fetchStats);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // No initial fetch, user must enter API key and click load button
+        });
+    </script>
+</body>
+</html>
