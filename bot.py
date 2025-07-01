@@ -312,7 +312,8 @@ async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> st
     data = {"contents": messages}
     async with ClientSession() as session:
         try:
-            async with session.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent", params=params, headers=headers, json=data) as response:
+            # Змінено модель з gemini-pro на gemini-2.0-flash
+            async with session.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", params=params, headers=headers, json=data) as response:
                 if response.status == 200:
                     res_json = await response.json()
                     if 'candidates' in res_json and res_json['candidates']:
