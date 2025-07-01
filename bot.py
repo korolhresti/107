@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS # Для генерації аудіо
+from gtts import gTTS # For audio generation
 
 load_dotenv()
 
@@ -34,7 +34,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x]
 ANOTHER_BOT_CHANNEL_LINK = "https://t.me/YourOtherBotChannel"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") # Додано WEBHOOK_URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") # WEBHOOK_URL added
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -171,7 +171,7 @@ async def create_tables():
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(id),
                 feed_name TEXT NOT NULL,
-                filters JSONB, -- Зберігатиме JSON об'єкт з фільтрами (наприклад, {"source_ids": [1, 2, 3]})
+                filters JSONB, -- Stores JSON object with filters (e.g., {"source_ids": [1, 2, 3]})
                 UNIQUE (user_id, feed_name)
             );
         """)
@@ -197,7 +197,7 @@ async def create_tables():
                 user_id BIGINT PRIMARY KEY REFERENCES users(id),
                 viewed_news_count INT DEFAULT 0,
                 last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігатиме список тем, які користувач переглядав
+                viewed_topics JSONB DEFAULT '[]'::jsonb -- Stores a list of topics the user has viewed
             );
         """)
         logger.info("Tables checked/created.")
@@ -312,8 +312,8 @@ async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> st
     data = {"contents": messages}
     async with ClientSession() as session:
         try:
-            # Змінено модель з gemini-pro на gemini-2.0-flash
-            async with session.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", params=params, headers=headers, json=data) as response:
+            # Changed model from gemini-pro to gemini-2.0-flash-lite
+            async with session.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent", params=params, headers=headers, json=data) as response:
                 if response.status == 200:
                     res_json = await response.json()
                     if 'candidates' in res_json and res_json['candidates']:
@@ -477,7 +477,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             await cur.execute("SELECT id, title, content, source_url, image_url, published_at, lang, ai_summary, ai_classified_topics FROM news WHERE id = %s", (news_id,))
             news_record = await cur.fetchone()
             if not news_record:
-                await bot.send_message(chat_id, "Новина не знайдена.")
+                await bot.send_message(chat_id, "News not found.")
                 return
 
             news_obj = News(id=news_record['id'], title=news_record['title'], content=news_record['content'],
@@ -488,10 +488,10 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             message_text = (
                 f"<b>{news_obj.title}</b>\n\n"
                 f"{news_obj.content[:1000]}...\n\n"
-                f"<i>Опубліковано: {news_obj.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n"
-                f"<i>Новина {current_index + 1} з {total_count}</i>"
+                f"<i>Published: {news_obj.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n"
+                f"<i>News {current_index + 1} of {total_count}</i>"
             )
-            if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
+            if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Read source', news_obj.source_url)}"
             
             reply_markup = get_news_keyboard(news_obj.id)
             
@@ -511,12 +511,12 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     await create_or_update_user(message.from_user)
-    await message.answer(f"Привіт, {hbold(message.from_user.full_name)}! 👋\n\nЯ ваш особистий новинний помічник з AI-функціями. Оберіть дію:", reply_markup=get_main_menu_keyboard())
+    await message.answer(f"Hello, {hbold(message.from_user.full_name)}! 👋\n\nI am your personal news assistant with AI functions. Choose an action:", reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("menu"))
 async def command_menu_handler(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Оберіть дію:", reply_markup=get_main_menu_keyboard())
+    await message.answer("Choose an action:", reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("cancel"))
 @router.message(StateFilter(
@@ -528,65 +528,65 @@ async def command_menu_handler(message: Message, state: FSMContext):
 ))
 async def cmd_cancel(message: Message, state: FSMContext):
     if await state.get_state() is None:
-        await message.answer("Немає активних дій для скасування.")
+        await message.answer("No active actions to cancel.")
         return
     await state.clear()
-    await message.answer("Дію скасовано. Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+    await message.answer("Action canceled. Choose next action:", reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("myprofile"))
 async def handle_my_profile_command(message: Message):
     user_id = message.from_user.id
     user_record = await get_user(user_id)
     if not user_record:
-        await message.answer("Ваш профіль не знайдено. Спробуйте /start.")
+        await message.answer("Your profile was not found. Try /start.")
         return
     username = user_record.username or user_record.first_name
-    is_admin_str = "Так" if user_record.is_admin else "Ні"
+    is_admin_str = "Yes" if user_record.is_admin else "No"
     created_at_str = user_record.created_at.strftime("%d.%m.%Y %H:%M")
     profile_text = (
-        f"👤 <b>Ваш Профіль:</b>\n"
-        f"Ім'я: {username}\n"
+        f"👤 <b>Your Profile:</b>\n"
+        f"Name: {username}\n"
         f"ID: <code>{user_id}</code>\n"
-        f"Зареєстрований: {created_at_str}\n"
-        f"Адмін: {is_admin_str}\n"
-        f"Автосповіщення: {'Увімкнено' if user_record.auto_notifications else 'Вимкнено'}\n"
-        f"Частота дайджестів: {user_record.digest_frequency}\n\n"
-        f"<i>Цей бот призначений для новин та AI-функцій. Функціонал продажу/купівлі доступний у каналі: {ANOTHER_BOT_CHANNEL_LINK}</i>"
+        f"Registered: {created_at_str}\n"
+        f"Admin: {is_admin_str}\n"
+        f"Auto-notifications: {'Enabled' if user_record.auto_notifications else 'Disabled'}\n"
+        f"Digest frequency: {user_record.digest_frequency}\n\n"
+        f"<i>This bot is for news and AI functions. Selling/buying functionality is available in the channel: {ANOTHER_BOT_CHANNEL_LINK}</i>"
     )
     await message.answer(profile_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 @router.callback_query(F.data == "main_menu")
 async def process_main_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("Оберіть дію:", reply_markup=get_main_menu_keyboard())
+    await callback.message.edit_text("Choose an action:", reply_markup=get_main_menu_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "ai_news_functions_menu")
 async def process_ai_news_functions_menu(callback: CallbackQuery):
-    await callback.message.edit_text("🧠 *AI-функції для новин:*\nОберіть бажану функцію:", reply_markup=get_ai_news_functions_menu(), parse_mode=ParseMode.MARKDOWN)
+    await callback.message.edit_text("🧠 *AI News Functions:*\nChoose the desired function:", reply_markup=get_ai_news_functions_menu(), parse_mode=ParseMode.MARKDOWN)
     await callback.answer()
 
 @router.callback_query(F.data == "settings_menu")
 async def process_settings_menu(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not user:
-        await callback.message.answer("Будь ласка, почніть з /start.")
+        await callback.message.answer("Please start with /start.")
         await callback.answer()
         return
     
-    toggle_btn_text = "🔔 Вимкнути автосповіщення" if user.auto_notifications else "🔕 Увімкнути автосповіщення"
+    toggle_btn_text = "🔔 Disable auto-notifications" if user.auto_notifications else "🔕 Enable auto-notifications"
     
     kb = InlineKeyboardBuilder()
-    kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
+    kb.add(InlineKeyboardButton(text="🔍 News Filters", callback_data="news_filters_menu"))
     kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
-    kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
+    kb.add(InlineKeyboardButton(text="⬅️ Back to main", callback_data="main_menu"))
     kb.adjust(1)
-    await callback.message.edit_text("⚙️ *Налаштування:*", reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN)
+    await callback.message.edit_text("⚙️ *Settings:*", reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN)
     await callback.answer()
 
 @router.callback_query(F.data == "news_filters_menu")
 async def process_news_filters_menu(callback: CallbackQuery):
-    await callback.message.edit_text("🔍 *Фільтри новин:*\nОберіть дію:", reply_markup=get_news_filters_menu_keyboard(), parse_mode=ParseMode.MARKDOWN)
+    await callback.message.edit_text("🔍 *News Filters:*\nChoose an action:", reply_markup=get_news_filters_menu_keyboard(), parse_mode=ParseMode.MARKDOWN)
     await callback.answer()
 
 @router.callback_query(F.data == "toggle_auto_notifications")
@@ -598,21 +598,21 @@ async def toggle_auto_notifications(callback: CallbackQuery):
             await cur.execute("SELECT auto_notifications FROM users WHERE id = %s", (user_id,))
             user_record = await cur.fetchone()
             if not user_record:
-                await callback.message.answer("Користувача не знайдено.")
+                await callback.message.answer("User not found.")
                 await callback.answer()
                 return
             new_status = not user_record['auto_notifications']
             await cur.execute("UPDATE users SET auto_notifications = %s WHERE id = %s", (new_status, user_id))
             
-            status_text = "увімкнено" if new_status else "вимкнено"
-            await callback.message.answer(f"🔔 Автоматичні сповіщення про новини {status_text}.")
+            status_text = "enabled" if new_status else "disabled"
+            await callback.message.answer(f"🔔 Automatic news notifications {status_text}.")
             
             user = await get_user(user_id)
-            toggle_btn_text = "🔔 Вимкнути автосповіщення" if user.auto_notifications else "🔕 Увімкнути автосповіщення"
+            toggle_btn_text = "🔔 Disable auto-notifications" if user.auto_notifications else "🔕 Enable auto-notifications"
             kb = InlineKeyboardBuilder()
-            kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
+            kb.add(InlineKeyboardButton(text="🔍 News Filters", callback_data="news_filters_menu"))
             kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
-            kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
+            kb.add(InlineKeyboardButton(text="⬅️ Back to main", callback_data="main_menu"))
             kb.adjust(1)
             await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
     await callback.answer()
@@ -622,7 +622,7 @@ async def set_news_sources_filter(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     sources = await get_sources()
     if not sources:
-        await callback.message.answer("Наразі немає доступних джерел для вибору.")
+        await callback.message.answer("No sources available for selection at the moment.")
         await callback.answer()
         return
 
@@ -634,10 +634,10 @@ async def set_news_sources_filter(callback: CallbackQuery, state: FSMContext):
         is_selected = source['id'] in selected_source_ids
         kb.button(text=f"{'✅ ' if is_selected else ''}{source['name']}", callback_data=f"toggle_source_filter_{source['id']}")
     kb.adjust(2)
-    kb.row(InlineKeyboardButton(text="Зберегти та застосувати", callback_data="save_source_filters"))
-    kb.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_filter_setup"))
+    kb.row(InlineKeyboardButton(text="Save and Apply", callback_data="save_source_filters"))
+    kb.row(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_filter_setup"))
 
-    await callback.message.edit_text("Оберіть джерела, з яких ви хочете отримувати новини:", reply_markup=kb.as_markup())
+    await callback.message.edit_text("Select sources from which you want to receive news:", reply_markup=kb.as_markup())
     await state.set_state(FilterSetup.waiting_for_source_selection)
     await callback.answer()
 
@@ -659,8 +659,8 @@ async def toggle_source_filter(callback: CallbackQuery, state: FSMContext):
         is_selected = source['id'] in selected_source_ids
         kb.button(text=f"{'✅ ' if is_selected else ''}{source['name']}", callback_data=f"toggle_source_filter_{source['id']}")
     kb.adjust(2)
-    kb.row(InlineKeyboardButton(text="Зберегти та застосувати", callback_data="save_source_filters"))
-    kb.row(InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_filter_setup"))
+    kb.row(InlineKeyboardButton(text="Save and Apply", callback_data="save_source_filters"))
+    kb.row(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_filter_setup"))
     await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
     await callback.answer()
 
@@ -677,53 +677,53 @@ async def save_source_filters(callback: CallbackQuery, state: FSMContext):
                 await cur.execute("SELECT name FROM sources WHERE id = ANY(%s)", (selected_source_ids,))
                 sources_data = await cur.fetchall()
                 selected_names = [s['name'] for s in sources_data]
-        await callback.message.edit_text(f"Ваші фільтри джерел збережено: {', '.join(selected_names)}.\nВи можете переглянути новини за допомогою /my_news.")
+        await callback.message.edit_text(f"Your source filters have been saved: {', '.join(selected_names)}.\nYou can view news using /my_news.")
     else:
-        await callback.message.edit_text("Ви не обрали жодного джерела. Новини будуть відображатися без фільтрації за джерелами.")
+        await callback.message.edit_text("You have not selected any sources. News will be displayed without source filtering.")
     await state.clear()
-    await callback.answer("Фільтри збережено!")
+    await callback.answer("Filters saved!")
 
 @router.callback_query(FilterSetup.waiting_for_source_selection, F.data == "cancel_filter_setup")
 async def cancel_filter_setup(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("Налаштування фільтрів скасовано.", reply_markup=get_settings_menu_keyboard())
+    await callback.message.edit_text("Filter setup canceled.", reply_markup=get_settings_menu_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "reset_all_filters")
 async def reset_all_filters(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     await update_user_filters(user_id, {})
-    await callback.message.edit_text("✅ Всі ваші фільтри новин були скинуті.", reply_markup=get_news_filters_menu_keyboard())
+    await callback.message.edit_text("✅ All your news filters have been reset.", reply_markup=get_news_filters_menu_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "news_from_youtube_interview")
 async def handle_news_from_youtube_interview(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AIAssistant.waiting_for_youtube_interview_url)
-    await callback.message.edit_text("🗞️ Надішліть посилання на YouTube-відео. (AI імітуватиме аналіз)", parse_mode=ParseMode.MARKDOWN)
+    await callback.message.edit_text("🗞️ Send a link to a YouTube video. (AI will simulate analysis)", parse_mode=ParseMode.MARKDOWN)
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_youtube_interview_url, F.text.regexp(r"(https?://)?(www\.)?(youtube|youtu|m\.youtube)\.(com|be)/(watch\?v=|embed/|v/|)([\w-]{11})(?:\S+)?"))
 async def process_youtube_interview_url(message: Message, state: FSMContext):
     youtube_url = message.text
-    await message.answer("⏳ Аналізую інтерв'ю та генерую новину...")
+    await message.answer("⏳ Analyzing interview and generating news...")
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    mock_content_prompt = f"Уяви, що ти переглянув YouTube-інтерв'ю за посиланням: {youtube_url}. Сформуй короткий уявний зміст цього інтерв'ю, щоб я міг створити новину. Включи гіпотетичні основні теми та ключові цитати. Зміст має бути реалістичним для генерації новини. До 500 слів, тільки зміст. Українською."
+    mock_content_prompt = f"Imagine you watched a YouTube interview at the link: {youtube_url}. Formulate a short imaginary content of this interview so that I can create news. Include hypothetical main topics and key quotes. The content should be realistic for news generation. Up to 500 words, content only. In Ukrainian."
     simulated_content = await make_gemini_request_with_history([{"role": "user", "parts": [{"text": mock_content_prompt}]}])
-    if not simulated_content or "Не вдалося отримати відповідь від AI." in simulated_content:
-        await message.answer("❌ Не вдалося отримати зміст інтерв'ю для аналізу. Спробуйте інше посилання.")
+    if not simulated_content or "Failed to get AI response." in simulated_content:
+        await message.answer("❌ Failed to get interview content for analysis. Try another link.")
         await state.clear()
         return
     generated_news_text = await ai_generate_news_from_youtube_interview(simulated_content)
-    if generated_news_text and "Не вдалося отримати відповідь від AI." not in generated_news_text:
-        await message.answer(f"✅ **Ваша новина з YouTube-інтерв'ю:**\n\n{generated_news_text}", parse_mode=ParseMode.MARKDOWN)
+    if generated_news_text and "Failed to get AI response." not in generated_news_text:
+        await message.answer(f"✅ **Your news from YouTube interview:**\n\n{generated_news_text}", parse_mode=ParseMode.MARKDOWN)
     else:
-        await message.answer("❌ Не вдалося створити новину з наданого інтерв'ю.")
+        await message.answer("❌ Failed to create news from the provided interview.")
     await state.clear()
-    await message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+    await message.answer("Choose next action:", reply_markup=get_main_menu_keyboard())
 
 @router.message(AIAssistant.waiting_for_youtube_interview_url)
 async def process_youtube_interview_url_invalid(message: Message):
-    await message.answer("Будь ласка, надішліть дійсне посилання на YouTube-відео, або введіть /cancel.")
+    await message.answer("Please send a valid YouTube video link, or enter /cancel.")
 
 @router.callback_query(F.data.startswith("ai_summary_"))
 async def handle_ai_summary_callback(callback: CallbackQuery):
@@ -734,17 +734,17 @@ async def handle_ai_summary_callback(callback: CallbackQuery):
             await cur.execute("SELECT title, content FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.message.answer("❌ News not found.")
                 await callback.answer()
                 return
-            await callback.message.answer("⏳ Генерую резюме за допомогою AI...")
+            await callback.message.answer("⏳ Generating summary using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             summary = await ai_summarize_news(news_item['title'], news_item['content'])
             if summary:
                 await cur.execute("UPDATE news SET ai_summary = %s WHERE id = %s", (summary, news_id))
-                await callback.message.answer(f"📝 <b>AI-резюме новини (ID: {news_id}):</b>\n\n{summary}")
+                await callback.message.answer(f"📝 <b>AI Summary of News (ID: {news_id}):</b>\n\n{summary}")
             else:
-                await callback.message.answer("❌ Не вдалося згенерувати резюме.")
+                await callback.message.answer("❌ Failed to generate summary.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("translate_"))
@@ -756,21 +756,21 @@ async def handle_translate_callback(callback: CallbackQuery):
             await cur.execute("SELECT title, content, lang FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.message.answer("❌ News not found.")
                 await callback.answer()
                 return
             target_lang = 'en' if news_item['lang'] == 'uk' else 'uk'
-            await callback.message.answer(f"⏳ Перекладаю новину на {target_lang.upper()} за допомогою AI...")
+            await callback.message.answer(f"⏳ Translating news to {target_lang.upper()} using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             translated_title = await ai_translate_news(news_item['title'], target_lang)
             translated_content = await ai_translate_news(news_item['content'], target_lang)
             if translated_title and translated_content:
                 await callback.message.answer(
-                    f"🌐 <b>Переклад новини (ID: {news_id}) на {target_lang.upper()}:</b>\n\n"
+                    f"🌐 <b>News Translation (ID: {news_id}) to {target_lang.upper()}:</b>\n\n"
                     f"<b>{translated_title}</b>\n\n{translated_content}"
                 )
             else:
-                await callback.message.answer("❌ Не вдалося перекласти новину.")
+                await callback.message.answer("❌ Failed to translate news.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("ask_news_ai_"))
@@ -778,7 +778,7 @@ async def handle_ask_news_ai_callback(callback: CallbackQuery, state: FSMContext
     news_id = int(callback.data.split('_')[3])
     await state.update_data(waiting_for_news_id_for_question=news_id)
     await state.set_state(AIAssistant.waiting_for_question)
-    await callback.message.answer("❓ Задайте ваше питання про новину.")
+    await callback.message.answer("❓ Ask your question about the news.")
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_question, F.text)
@@ -787,7 +787,7 @@ async def process_news_question(message: Message, state: FSMContext):
     news_id = data.get('waiting_for_news_id_for_question')
     question = message.text
     if not news_id:
-        await message.answer("Контекст новини втрачено. Спробуйте ще раз через /my_news.")
+        await message.answer("News context lost. Try again via /my_news.")
         await state.clear()
         return
     pool = await get_db_pool()
@@ -796,23 +796,23 @@ async def process_news_question(message: Message, state: FSMContext):
             await cur.execute("SELECT title, content, lang FROM news WHERE id = %s", (news_id,))
             news_item_data = await cur.fetchone()
             if not news_item_data:
-                await message.answer("Новину не знайдено.")
+                await message.answer("News not found.")
                 await state.clear()
                 return
             news_item = News(id=news_id, title=news_item_data['title'], content=news_item_data['content'],
                              lang=news_item_data['lang'], published_at=datetime.now())
             chat_history = data.get('ask_news_ai_history', [])
             chat_history.append({"role": "user", "parts": [{"text": question}]})
-            await message.answer("⏳ Обробляю ваше питання за допомогою AI...")
+            await message.answer("⏳ Processing your question using AI...")
             await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
             ai_response = await ai_answer_news_question(news_item, question, chat_history)
             if ai_response:
-                await message.answer(f"<b>AI відповідає:</b>\n\n{ai_response}")
+                await message.answer(f"<b>AI answers:</b>\n\n{ai_response}")
                 chat_history.append({"role": "model", "parts": [{"text": ai_response}]})
                 await state.update_data(ask_news_ai_history=chat_history)
             else:
-                await message.answer("❌ Не вдалося відповісти на ваше питання.")
-    await message.answer("Продовжуйте ставити питання або введіть /cancel для завершення діалогу.")
+                await message.answer("❌ Failed to answer your question.")
+    await message.answer("Continue asking questions or enter /cancel to end the dialogue.")
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities_callback(callback: CallbackQuery):
@@ -823,16 +823,16 @@ async def handle_extract_entities_callback(callback: CallbackQuery):
             await cur.execute("SELECT content FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.message.answer("❌ News not found.")
                 await callback.answer()
                 return
-            await callback.message.answer("⏳ Витягую ключові сутності за допомогою AI...")
+            await callback.message.answer("⏳ Extracting key entities using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             entities = await ai_extract_entities(news_item['content'])
             if entities:
-                await callback.message.answer(f"🧑‍🤝‍🧑 <b>Ключові особи/сутності в новині (ID: {news_id}):</b>\n\n{entities}")
+                await callback.message.answer(f"🧑‍🤝‍🧑 <b>Key persons/entities in news (ID: {news_id}):</b>\n\n{entities}")
             else:
-                await callback.message.answer("❌ Не вдалося витягнути сутності.")
+                await callback.message.answer("❌ Failed to extract entities.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("classify_topics_"))
@@ -844,21 +844,21 @@ async def handle_classify_topics_callback(callback: CallbackQuery):
             await cur.execute("SELECT content, ai_classified_topics FROM news WHERE id = %s", (news_id,))
             news_item_record = await cur.fetchone()
             if not news_item_record:
-                await callback.message.answer("❌ Новину не знайдено.")
+                await callback.message.answer("❌ News not found.")
                 await callback.answer()
                 return
             topics = news_item_record['ai_classified_topics']
             if not topics:
-                await callback.message.answer("⏳ Класифікую новину за темами за допомогою AI...")
+                await callback.message.answer("⏳ Classifying news by topics using AI...")
                 await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
                 topics = await ai_classify_topics(news_item_record['content'])
                 if topics: await cur.execute("UPDATE news SET ai_classified_topics = %s WHERE id = %s", (json.dumps(topics), news_id))
-                else: topics = ["Не вдалося визначити теми."]
+                else: topics = ["Failed to determine topics."]
             if topics:
                 topics_str = ", ".join(topics)
-                await callback.message.answer(f"🏷️ <b>Класифікація за темами для новини (ID: {news_id}):</b>\n\n{topics_str}")
+                await callback.message.answer(f"🏷️ <b>Topic classification for news (ID: {news_id}):</b>\n\n{topics_str}")
             else:
-                await callback.message.answer("❌ Не вдалося класифікувати новину за темами.")
+                await callback.message.answer("❌ Failed to classify news by topics.")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("explain_term_"))
@@ -866,7 +866,7 @@ async def handle_explain_term_callback(callback: CallbackQuery, state: FSMContex
     news_id = int(callback.data.split('_')[2])
     await state.update_data(waiting_for_news_id_for_question=news_id)
     await state.set_state(AIAssistant.waiting_for_term_to_explain)
-    await callback.message.answer("❓ Введіть термін, який ви хочете, щоб AI пояснив у контексті цієї новини.")
+    await callback.message.answer("❓ Enter the term you want AI to explain in the context of this news.")
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_term_to_explain, F.text)
@@ -875,7 +875,7 @@ async def process_explain_term_query(message: Message, state: FSMContext):
     news_id = data.get('waiting_for_news_id_for_question')
     term = message.text.strip()
     if not news_id:
-        await message.answer("Контекст новини втрачено. Спробуйте ще раз через /my_news.")
+        await message.answer("News context lost. Try again via /my_news.")
         await state.clear()
         return
     pool = await get_db_pool()
@@ -884,16 +884,16 @@ async def process_explain_term_query(message: Message, state: FSMContext):
             await cur.execute("SELECT content FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await message.answer("Новину не знайдено.")
+                await message.answer("News not found.")
                 await state.clear()
                 return
-            await message.answer(f"⏳ Пояснюю термін '{term}' за допомогою AI...")
+            await message.answer(f"⏳ Explaining term '{term}' using AI...")
             await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
             explanation = await ai_explain_term(term, news_item['content'])
             if explanation:
-                await message.answer(f"❓ <b>Пояснення терміну '{term}' (Новина ID: {news_id}):</b>\n\n{explanation}")
+                await message.answer(f"❓ <b>Explanation of term '{term}' (News ID: {news_id}):</b>\n\n{explanation}")
             else:
-                await message.answer("❌ Не вдалося пояснити термін.")
+                await message.answer("❌ Failed to explain term.")
     await state.clear()
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
@@ -901,7 +901,7 @@ async def handle_fact_check_news_callback(callback: CallbackQuery, state: FSMCon
     news_id = int(callback.data.split('_')[3])
     await state.update_data(fact_check_news_id=news_id)
     await state.set_state(AIAssistant.waiting_for_fact_to_check)
-    await callback.message.answer("✅ Введіть факт, який ви хочете перевірити в контексті цієї новини.")
+    await callback.message.answer("✅ Enter the fact you want to check in the context of this news.")
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_fact_to_check, F.text)
@@ -910,7 +910,7 @@ async def process_fact_to_check(message: Message, state: FSMContext):
     news_id = data.get('fact_check_news_id')
     fact_to_check = message.text.strip()
     if not news_id:
-        await message.answer("Контекст новини втрачено. Спробуйте ще раз.")
+        await message.answer("News context lost. Try again.")
         await state.clear()
         return
     pool = await get_db_pool()
@@ -919,16 +919,16 @@ async def process_fact_to_check(message: Message, state: FSMContext):
             await cur.execute("SELECT content FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await message.answer("Новину не знайдено.")
+                await message.answer("News not found.")
                 await state.clear()
                 return
-            await message.answer(f"⏳ Перевіряю факт: '{fact_to_check}' за допомогою AI...")
+            await message.answer(f"⏳ Checking fact: '{fact_to_check}' using AI...")
             await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
             fact_check_result = await ai_fact_check(fact_to_check, news_item['content'])
             if fact_check_result:
-                await message.answer(f"✅ <b>Перевірка факту для новини (ID: {news_id}):</b>\n\n{fact_check_result}")
+                await message.answer(f"✅ <b>Fact check for news (ID: {news_id}):</b>\n\n{fact_check_result}")
             else:
-                await message.answer("❌ Не вдалося перевірити факт.")
+                await message.answer("❌ Failed to check fact.")
     await state.clear()
 
 @router.callback_query(F.data.startswith("sentiment_trend_analysis_"))
@@ -940,11 +940,11 @@ async def handle_sentiment_trend_analysis_callback(callback: CallbackQuery):
             await cur.execute("SELECT id, title, content, ai_summary, ai_classified_topics, lang, published_at FROM news WHERE id = %s", (news_id,))
             main_news_record = await cur.fetchone()
             if not main_news_record:
-                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.message.answer("❌ News for analysis not found.")
                 await callback.answer()
                 return
             main_news_obj = News(id=main_news_record['id'], title=main_news_record['title'], content=main_news_record['content'], lang=main_news_record['lang'], published_at=main_news_record['published_at'], ai_summary=main_news_record['ai_summary'], ai_classified_topics=main_news_record['ai_classified_topics'])
-            await callback.message.answer("⏳ Аналізую тренд настроїв за допомогою AI...")
+            await callback.message.answer("⏳ Analyzing sentiment trend using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             related_news_items = []
             if main_news_obj.ai_classified_topics:
@@ -953,7 +953,7 @@ async def handle_sentiment_trend_analysis_callback(callback: CallbackQuery):
                 related_news_records = await cur.fetchall()
                 related_news_items = [News(id=r['id'], title=r['title'], content=r['content'], lang=r['lang'], published_at=r['published_at'], ai_summary=r['ai_summary']) for r in related_news_records]
             ai_sentiment_trend = await ai_analyze_sentiment_trend(main_news_obj, related_news_items)
-            await callback.message.answer(f"📊 <b>Аналіз тренду настроїв для новини (ID: {news_id}):</b>\n\n{ai_sentiment_trend}", parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"📊 <b>Sentiment Trend Analysis for News (ID: {news_id}):</b>\n\n{ai_sentiment_trend}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("bias_detection_"))
@@ -965,13 +965,13 @@ async def handle_bias_detection_callback(callback: CallbackQuery):
             await cur.execute("SELECT title, content, ai_summary FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.message.answer("❌ News for analysis not found.")
                 await callback.answer()
                 return
-            await callback.message.answer("⏳ Аналізую новину на наявність упереджень за допомогою AI...")
+            await callback.message.answer("⏳ Analyzing news for bias using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             ai_bias_analysis = await ai_detect_bias_in_news(news_item['title'], news_item['content'], news_item['ai_summary'])
-            await callback.message.answer(f"🔍 <b>Аналіз на упередженість для новини (ID: {news_id}):</b>\n\n{ai_bias_analysis}", parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"🔍 <b>Bias Analysis for News (ID: {news_id}):</b>\n\n{ai_bias_analysis}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("audience_summary_"))
@@ -980,26 +980,26 @@ async def handle_audience_summary_callback(callback: CallbackQuery, state: FSMCo
     await state.update_data(audience_summary_news_id=news_id)
     await state.set_state(AIAssistant.waiting_for_audience_summary_type)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Дитина", callback_data="audience_type_child"), InlineKeyboardButton(text="Експерт", callback_data="audience_type_expert")],
-        [InlineKeyboardButton(text="Політик", callback_data="audience_type_politician"), InlineKeyboardButton(text="Технолог", callback_data="audience_type_technologist")],
-        [InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_audience_summary")]
+        [InlineKeyboardButton(text="Child", callback_data="audience_type_child"), InlineKeyboardButton(text="Expert", callback_data="audience_type_expert")],
+        [InlineKeyboardButton(text="Politician", callback_data="audience_type_politician"), InlineKeyboardButton(text="Technologist", callback_data="audience_type_technologist")],
+        [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_audience_summary")]
     ])
-    await callback.message.edit_text("📝 Для якої аудиторії ви хочете отримати резюме цієї новини?", reply_markup=keyboard)
+    await callback.message.edit_text("📝 For which audience do you want to get a summary of this news?", reply_markup=keyboard)
     await callback.answer()
 
 @router.callback_query(AIAssistant.waiting_for_audience_summary_type, F.data.startswith("audience_type_"))
 async def process_audience_type_selection(callback: CallbackQuery, state: FSMContext):
     audience_type_key = callback.data.split('_')[2]
-    audience_map = {'child': 'дитини', 'expert': 'експерта', 'politician': 'політика', 'technologist': 'технолога'}
-    selected_audience = audience_map.get(audience_type_key, 'загальної аудиторії')
+    audience_map = {'child': 'child', 'expert': 'expert', 'politician': 'politician', 'technologist': 'technologist'}
+    selected_audience = audience_map.get(audience_type_key, 'general audience')
     data = await state.get_data()
     news_id = data.get('audience_summary_news_id')
     if not news_id:
-        await callback.message.answer("Контекст новини втрачено. Спробуйте знову.")
+        await callback.message.answer("News context lost. Try again.")
         await state.clear()
         await callback.answer()
         return
-    await callback.message.edit_text(f"⏳ Генерую резюме для аудиторії: <b>{selected_audience}</b>...", parse_mode=ParseMode.HTML)
+    await callback.message.edit_text(f"⏳ Generating summary for audience: <b>{selected_audience}</b>...", parse_mode=ParseMode.HTML)
     await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
     pool = await get_db_pool()
     async with pool.connection() as conn:
@@ -1007,18 +1007,18 @@ async def process_audience_type_selection(callback: CallbackQuery, state: FSMCon
             await cur.execute("SELECT title, content, ai_summary FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину для резюме не знайдено.")
+                await callback.message.answer("❌ News for summary not found.")
                 await state.clear()
                 await callback.answer()
                 return
             ai_summary_for_audience = await ai_summarize_for_audience(news_item['title'], news_item['content'], news_item['ai_summary'], selected_audience)
-            await callback.message.answer(f"📝 <b>Резюме для аудиторії: {selected_audience} (Новина ID: {news_id}):</b>\n\n{ai_summary_for_audience}", parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"📝 <b>Summary for audience: {selected_audience} (News ID: {news_id}):</b>\n\n{ai_summary_for_audience}", parse_mode=ParseMode.HTML)
     await state.clear()
     await callback.answer()
 
 @router.callback_query(AIAssistant.waiting_for_audience_summary_type, F.data == "cancel_audience_summary")
 async def cancel_audience_summary_callback(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("✅ Генерацію резюме для аудиторії скасовано.")
+    await callback.message.edit_text("✅ Audience summary generation canceled.")
     await state.clear()
     await callback.answer()
 
@@ -1031,13 +1031,13 @@ async def handle_historical_analogues_callback(callback: CallbackQuery):
             await cur.execute("SELECT title, content, ai_summary FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину для аналізу не знайдено.")
+                await callback.message.answer("❌ News for analysis not found.")
                 await callback.answer()
                 return
-            await callback.message.answer("⏳ Шукаю історичні аналоги за допомогою AI...")
+            await callback.message.answer("⏳ Searching for historical analogues using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             ai_historical_analogues = await ai_find_historical_analogues(news_item['title'], news_item['content'], news_item['ai_summary'])
-            await callback.message.answer(f"📜 <b>Історичні аналоги для новини (ID: {news_id}):</b>\n\n{ai_historical_analogues}", parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"📜 <b>Historical Analogues for News (ID: {news_id}):</b>\n\n{ai_historical_analogues}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("impact_analysis_"))
@@ -1049,13 +1049,13 @@ async def handle_impact_analysis_callback(callback: CallbackQuery):
             await cur.execute("SELECT title, content, ai_summary FROM news WHERE id = %s", (news_id,))
             news_item = await cur.fetchone()
             if not news_item:
-                await callback.message.answer("❌ Новину для аналізу впливу не знайдено.")
+                await callback.message.answer("❌ News for impact analysis not found.")
                 await callback.answer()
                 return
-            await callback.message.answer("⏳ Аналізую потенційний вплив новини за допомогою AI...")
+            await callback.message.answer("⏳ Analyzing potential news impact using AI...")
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             ai_impact_analysis = await ai_analyze_impact(news_item['title'], news_item['content'], news_item['ai_summary'])
-            await callback.message.answer(f"💥 <b>Аналіз впливу новини (ID: {news_id}):</b>\n\n{ai_impact_analysis}", parse_mode=ParseMode.HTML)
+            await callback.message.answer(f"💥 <b>News Impact Analysis (ID: {news_id}):</b>\n\n{ai_impact_analysis}", parse_mode=ParseMode.HTML)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("what_if_scenario_"))
@@ -1064,22 +1064,22 @@ async def handle_what_if_scenario_callback(callback: CallbackQuery, state: FSMCo
     await state.update_data(what_if_news_id=news_id)
     await state.set_state(AIAssistant.waiting_for_what_if_query)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(f"🤔 Введіть ваше питання у форматі 'Що якби...' для новини (ID: {news_id}). Наприклад: 'Що якби зустріч завершилася без угоди?'")
+    await callback.message.answer(f"🤔 Enter your 'What if...' question for the news (ID: {news_id}). For example: 'What if the meeting ended without an agreement?'")
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_what_if_query, F.text)
 async def process_what_if_query(message: Message, state: FSMContext):
     what_if_question = message.text.strip()
     if not what_if_question:
-        await message.answer("Будь ласка, введіть ваше питання у форматі 'Що якби...'.")
+        await message.answer("Please enter your 'What if...' question.")
         return
     data = await state.get_data()
     news_id_for_context = data.get('what_if_news_id')
     if not news_id_for_context:
-        await message.answer("Контекст новини втрачено. Спробуйте ще раз через /my_news.")
+        await message.answer("News context lost. Try again via /my_news.")
         await state.clear()
         return
-    await message.answer("⏳ Генерую сценарій 'Що якби...' за допомогою AI...")
+    await message.answer("⏳ Generating 'What if...' scenario using AI...")
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     pool = await get_db_pool()
     async with pool.connection() as conn:
@@ -1087,11 +1087,11 @@ async def process_what_if_query(message: Message, state: FSMContext):
             await cur.execute("SELECT title, content, ai_summary FROM news WHERE id = %s", (news_id_for_context,))
             news_item = await cur.fetchone()
             if not news_item:
-                await message.answer("❌ Новину не знайдено. Спробуйте з іншою новиною.")
+                await message.answer("❌ News not found. Try with another news item.")
                 await state.clear()
                 return
             ai_what_if_scenario = await ai_generate_what_if_scenario(news_item['title'], news_item['content'], news_item['ai_summary'], what_if_question)
-            await message.answer(f"🤔 <b>Сценарій 'Що якби...' для новини (ID: {news_id_for_context}):</b>\n\n{ai_what_if_scenario}", parse_mode=ParseMode.HTML)
+            await message.answer(f"🤔 <b>'What if...' Scenario for News (ID: {news_id_for_context}):</b>\n\n{ai_what_if_scenario}", parse_mode=ParseMode.HTML)
     await state.clear()
 
 @router.callback_query(F.data == "my_news")
@@ -1106,15 +1106,15 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
             query = "SELECT id FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
             params = []
             if source_ids:
-                # Отримаємо лінки джерел за їхніми ID
+                # Get source links by their IDs
                 await cur.execute("SELECT link FROM sources WHERE id = ANY(%s)", (source_ids,))
                 source_links_data = await cur.fetchall()
                 source_links = [s['link'] for s in source_links_data]
                 if source_links:
-                    query += " AND source_url = ANY(%s)" # Використовуємо ANY для масиву лінків
+                    query += " AND source_url = ANY(%s)" # Use ANY for array of links
                     params.append(source_links)
-                else: # Якщо обрані ID джерел не відповідають жодним лінкам, то новин не буде
-                    await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
+                else: # If selected source IDs do not match any links, there will be no news
+                    await callback.message.answer("There are currently no news available for your filters. Try changing filters or check back later.")
                     await callback.answer()
                     return
 
@@ -1130,14 +1130,14 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
 
 
             if not news_records:
-                await callback.message.answer("Наразі немає доступних новин за вашими фільтрами. Спробуйте змінити фільтри або зайдіть пізніше.")
+                await callback.message.answer("There are currently no news available for your filters. Try changing filters or check back later.")
                 await callback.answer()
                 return
             news_ids = [r['id'] for r in news_records]
             await state.update_data(news_ids=news_ids, news_index=0)
             await state.set_state(NewsBrowse.Browse_news)
             current_news_id = news_ids[0]
-            await callback.message.edit_text("Завантажую новину...")
+            await callback.message.edit_text("Loading news...")
             await send_news_to_user(callback.message.chat.id, current_news_id, 0, len(news_ids))
             await callback.answer()
 
@@ -1152,20 +1152,20 @@ async def process_next_news(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
         await send_news_to_user(callback.message.chat.id, news_ids[new_index], new_index, len(news_ids))
     else:
-        await callback.answer("Це остання новина.", show_alert=True)
+        await callback.answer("This is the last news item.", show_alert=True)
     await callback.answer()
 
 @router.callback_query(F.data == "add_news")
 async def add_news_command(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddNews.waiting_for_news_url)
-    await callback.message.answer("Будь ласка, надішліть посилання на новинну статтю.")
+    await callback.message.answer("Please send a link to a news article.")
     await callback.answer()
 
 @router.message(AddNews.waiting_for_news_url, F.text.regexp(r"https?://[^\s]+"))
 async def process_news_url(message: Message, state: FSMContext):
     news_url = message.text
-    mock_title = f"Новина з {news_url.split('/')[2]}"
-    mock_content = f"Це уявний зміст новинної статті за посиланням: {news_url}. Вона розповідає про важливі події у світі, вплив технологій на суспільство та нові відкриття у науці. Деталі залишаються за кадром, оскільки це лише симуляція парсингу реальної новини. Більше інформації можна знайти за посиланням."
+    mock_title = f"News from {news_url.split('/')[2]}"
+    mock_content = f"This is an imaginary content of a news article from the link: {news_url}. It talks about important world events, the impact of technology on society, and new discoveries in science. Details are left out as this is just a simulation of parsing a real news item. More information can be found at the link."
     mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=News+Image"
     
     user_id = message.from_user.id
@@ -1179,21 +1179,21 @@ async def process_news_url(message: Message, state: FSMContext):
     is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
     if not is_interesting:
-        await message.answer("Ця новина не здається достатньо цікавою для нашої стрічки. Спробуйте інше посилання.")
+        await message.answer("This news does not seem interesting enough for our feed. Try another link.")
         await state.clear()
         return
 
     await state.update_data(news_url=news_url, title=mock_title, content=mock_content, image_url=mock_image_url)
     await state.set_state(AddNews.waiting_for_news_lang)
     lang_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Українська", callback_data="lang_uk")],
+        [InlineKeyboardButton(text="Ukrainian", callback_data="lang_uk")],
         [InlineKeyboardButton(text="English", callback_data="lang_en")]
     ])
-    await message.answer("Будь ласка, оберіть мову новини:", reply_markup=lang_keyboard)
+    await message.answer("Please choose the language of the news:", reply_markup=lang_keyboard)
 
 @router.message(AddNews.waiting_for_news_url)
 async def process_news_url_invalid(message: Message):
-    await message.answer("Будь ласка, надішліть дійсне посилання на статтю, або введіть /cancel.")
+    await message.answer("Please send a valid article link, or enter /cancel.")
 
 @router.callback_query(AddNews.waiting_for_news_lang, F.data.startswith("lang_"))
 async def process_news_lang(callback: CallbackQuery, state: FSMContext):
@@ -1204,14 +1204,14 @@ async def process_news_lang(callback: CallbackQuery, state: FSMContext):
     news_url = data['news_url']
     image_url = data['image_url']
 
-    await callback.message.edit_text("⏳ Аналізую новину та генерую пост за допомогою AI...")
+    await callback.message.edit_text("⏳ Analyzing news and generating post using AI...")
     await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
 
     fake_check_result = await ai_check_news_for_fakes(title, content)
-    if "Ймовірно, фейк" in fake_check_result:
-        await callback.message.answer(f"⚠️ **Увага!** AI-перевірка виявила: {fake_check_result}\nНовина не буде опублікована через можливу дезінформацію.")
+    if "Ймовірно, фейк" in fake_check_result: # "Ймовірно, фейк" is Ukrainian for "Likely fake"
+        await callback.message.answer(f"⚠️ **Attention!** AI check revealed: {fake_check_result}\nNews will not be published due to possible misinformation.")
         await state.clear()
-        await callback.message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+        await callback.message.answer("Choose next action:", reply_markup=get_main_menu_keyboard())
         await callback.answer()
         return
 
@@ -1225,41 +1225,41 @@ async def process_news_lang(callback: CallbackQuery, state: FSMContext):
     await add_news(new_news)
     logger.info(f"News {new_news.id} added and auto-approved.")
 
-    await callback.message.answer(f"✅ Новину успішно додано та згенеровано AI-пост:\n\n{post_text}", parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-    await callback.message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+    await callback.message.answer(f"✅ News successfully added and AI-post generated:\n\n{post_text}", parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await callback.message.answer("Choose next action:", reply_markup=get_main_menu_keyboard())
     await state.clear()
     await callback.answer()
 
 @router.message(AddNews.waiting_for_news_lang)
 async def process_news_lang_invalid(message: Message):
-    await message.answer("Будь ласка, оберіть мову новини за допомогою кнопок, або введіть /cancel.")
+    await message.answer("Please choose news language using buttons, or enter /cancel.")
 
 @router.callback_query(F.data == "help_menu")
 async def handle_help_menu(callback: CallbackQuery):
     help_text = (
-        "<b>Доступні команди:</b>\n"
-        "/start - Почати роботу з ботом\n"
-        "/menu - Головне меню\n"
-        "/cancel - Скасувати поточну дію\n"
-        "/myprofile - Переглянути ваш профіль\n"
-        "/my_news - Переглянути добірку новин\n"
-        "/add_news - Додати нову новину (для публікації)\n"
-        "/setfiltersources - Налаштувати джерела новин\n"
-        "/resetfilters - Скинути всі фільтри новин\n"
-        "\n<b>AI-функції:</b>\n"
-        "Доступні після вибору новини (кнопки під новиною).\n"
-        "\n<b>Інтеграція з маркетплейсом:</b>\n"
-        "Кнопки 'Допоможи продати' та 'Допоможи купити' перенаправляють на інший бот/канал."
+        "<b>Available commands:</b>\n"
+        "/start - Start working with the bot\n"
+        "/menu - Main menu\n"
+        "/cancel - Cancel current action\n"
+        "/myprofile - View your profile\n"
+        "/my_news - View news selection\n"
+        "/add_news - Add new news (for publication)\n"
+        "/setfiltersources - Configure news sources\n"
+        "/resetfilters - Reset all news filters\n"
+        "\n<b>AI functions:</b>\n"
+        "Available after selecting news (buttons under the news).\n"
+        "\n<b>Marketplace integration:</b>\n"
+        "Buttons 'Help sell' and 'Help buy' redirect to another bot/channel."
     )
     await callback.message.edit_text(help_text, parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard())
     await callback.answer()
 
 async def news_repost_task():
-    repost_interval = 300 # Збільшено інтервал до 300 секунд (5 хвилин)
+    repost_interval = 300 # Increased interval to 300 seconds (5 minutes)
     while True:
         try:
             mock_title = f"AI News Update {datetime.now().strftime('%H:%M:%S')}"
-            mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство."
+            mock_content = f"This is an automatically generated news item about the latest events in the world of AI and technology. AI continues to integrate into everyday life, changing the way people interact with information. New advances in machine learning allow for the creation of more personalized and adaptive systems. Experts predict further growth in the impact of AI on the economy and society."
             mock_source_url = "https://example.com/ai-news"
             mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
             mock_lang = 'uk'
@@ -1314,17 +1314,17 @@ async def news_digest_task():
                         query = "SELECT id, title, content, source_url, image_url, published_at, ai_summary FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
                         params = []
                         if source_ids:
-                            # Отримаємо лінки джерел за їхніми ID для фільтрації
+                            # Get source links by their IDs for filtering
                             await cur.execute("SELECT link FROM sources WHERE id = ANY(%s)", (source_ids,))
                             source_links_data = await cur.fetchall()
                             source_links = [s['link'] for s in source_links_data]
                             if source_links:
                                 query += " AND source_url = ANY(%s)"
                                 params.append(source_links)
-                            else: # Якщо обрані ID джерел не відповідають жодним лінкам, то для цього користувача новин не буде
-                                continue # Переходимо до наступного користувача
+                            else: # If selected source IDs do not match any links, there will be no news for this user
+                                continue # Proceed to the next user
                         
-                        # Додаємо фільтрацію за переглянутими новинами
+                        # Add filtering by viewed news
                         query += f" AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = {user_id}) ORDER BY published_at DESC LIMIT 5"
                         
                         # Execute the query with parameters
@@ -1336,7 +1336,7 @@ async def news_digest_task():
                         news_items_data = await cur.fetchall()
                         
                         if news_items_data:
-                            digest_text = f"📰 <b>Ваш щоденний дайджест новин ({now.strftime('%d.%m.%Y')}):</b>\n\n"
+                            digest_text = f"📰 <b>Your daily news digest ({now.strftime('%d.%m.%Y')}):</b>\n\n"
                             for news_rec in news_items_data:
                                 news_obj = News(id=news_rec['id'], title=news_rec['title'], content=news_rec['content'],
                                                 source_url=news_rec['source_url'], image_url=news_rec['image_url'],
@@ -1344,7 +1344,7 @@ async def news_digest_task():
                                 
                                 summary_to_use = news_obj.ai_summary or news_obj.content[:200] + "..."
                                 digest_text += f"• <b>{news_obj.title}</b>\n{summary_to_use}\n"
-                                if news_obj.source_url: digest_text += f"🔗 {hlink('Читати', news_obj.source_url)}\n\n"
+                                if news_obj.source_url: digest_text += f"🔗 {hlink('Read', news_obj.source_url)}\n\n"
                                 
                                 await mark_news_as_viewed(user_id, news_obj.id)
                             
@@ -1362,24 +1362,24 @@ async def startup_event():
     await create_tables()
     
     if WEBHOOK_URL and API_TOKEN:
-        # Використовуємо фіксований шлях для вебхука
+        # Use a fixed path for the webhook
         webhook_full_url = f"{WEBHOOK_URL.rstrip('/')}/telegram_webhook"
-        logger.info(f"Attempting to set webhook to: {webhook_full_url}") # Додано логування
+        logger.info(f"Attempting to set webhook to: {webhook_full_url}") # Added logging
         try:
-            await asyncio.sleep(5) # Додано затримку в 5 секунд
+            await asyncio.sleep(5) # Added a 5-second delay
             await bot.set_webhook(url=webhook_full_url)
             logger.info(f"Webhook successfully set to {webhook_full_url}")
         except Exception as e:
             logger.error(f"Failed to set webhook: {e}")
-            # Важливо: Якщо вебхук не вдалося встановити, додаток не зможе отримувати оновлення.
-            # Тому краще дозволити йому впасти, щоб проблема була помічена.
-            raise # Перевикликаємо виняток, щоб зупинити запуск, якщо вебхук не вдалося встановити
+            # Important: If the webhook cannot be set, the application will not be able to receive updates.
+            # Therefore, it is better to let it crash so that the problem is noticed.
+            raise # Re-raise the exception to stop startup if webhook fails to set
     else:
         logger.warning("WEBHOOK_URL or BOT_TOKEN not set. Webhook will not be configured.")
-        # Якщо WEBHOOK_URL або BOT_TOKEN не встановлені, додаток не буде працювати коректно з вебхуками.
-        # В цьому випадку, якщо ви хочете використовувати polling як запасний варіант, його потрібно увімкнути тут.
-        # Однак для продакшену на Render рекомендується використовувати вебхуки.
-        # asyncio.create_task(dp.start_polling(bot)) # Закоментовано, щоб уникнути конфлікту, якщо вебхук не налаштований.
+        # If WEBHOOK_URL or BOT_TOKEN are not set, the application will not work correctly with webhooks.
+        # In this case, if you want to use polling as a fallback, it needs to be enabled here.
+        # However, for production on Render, webhooks are recommended.
+        # asyncio.create_task(dp.start_polling(bot)) # Commented out to avoid conflict if webhook is not configured.
 
     asyncio.create_task(news_repost_task())
     asyncio.create_task(news_digest_task())
@@ -1389,7 +1389,7 @@ async def startup_event():
 async def shutdown_event():
     global db_pool
     if db_pool: await db_pool.close()
-    # При вимкненні сервісу, бажано видалити webhook
+    # When the service shuts down, it is advisable to delete the webhook
     if API_TOKEN:
         try:
             await bot.delete_webhook()
@@ -1491,7 +1491,7 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
             if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
             return
 
-@app.post("/telegram_webhook") # Змінено шлях для вебхука
+@app.post("/telegram_webhook") # Changed webhook path
 async def telegram_webhook(request: Request):
     update = await request.json()
     await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
@@ -1499,9 +1499,9 @@ async def telegram_webhook(request: Request):
 
 @router.message()
 async def echo_handler(message: types.Message) -> None:
-    await message.answer("Не розумію команду. Скористайтеся /menu.")
+    await message.answer("Command not understood. Use /menu.")
 
-# Видаляємо функцію main та asyncio.run(main()) оскільки FastAPI керує життєвим циклом програми
+# Removed main function and asyncio.run(main()) as FastAPI manages application lifecycle
 # async def main():
 #     await get_db_pool()
 #     await create_tables()
