@@ -145,6 +145,7 @@ async def create_tables():
     pool = await get_db_pool()
     async with pool.connection() as conn:
         # Оновлено CREATE TABLE users для включення всіх полів
+        # Змінено id на BIGINT
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT PRIMARY KEY,
@@ -587,8 +588,10 @@ def get_main_menu_keyboard():
     kb.add(InlineKeyboardButton(text="🧠 AI-функції (Новини)", callback_data="ai_news_functions_menu"))
     kb.add(InlineKeyboardButton(text="⚙️ Налаштування", callback_data="settings_menu"))
     kb.add(InlineKeyboardButton(text="❓ Допомога", callback_data="help_menu"))
-    kb.add(InlineKeyboardButton(text="🤝 Допоможи продати", url=ANOTHER_BOT_CHANNEL_LINK_SELL))
+    # Змінено розташування кнопок "Мова" та "Допоможи купити"
+    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu"))
     kb.add(InlineKeyboardButton(text="🛍️ Допоможи купити", url=ANOTHER_BOT_CHANNEL_LINK_BUY))
+    kb.add(InlineKeyboardButton(text="🤝 Допоможи продати", url=ANOTHER_BOT_CHANNEL_LINK_SELL)) # Залишено окремо
     kb.adjust(2)
     return kb.as_markup()
 
@@ -653,6 +656,9 @@ def get_news_keyboard(news_id: int, current_index: int, total_count: int):
     
     if nav_buttons:
         buttons.append(nav_buttons)
+    
+    # Додаємо кнопку "Назад до головного" в окремий ряд
+    buttons.append([InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1490,7 +1496,7 @@ async def handle_help_menu(callback: CallbackQuery):
     await callback.answer()
 
 async def news_repost_task():
-    repost_interval = 300 # Збільшено інтервал до 300 секунд (5 хвилин)
+    repost_interval = 300 # Змінено інтервал до 300 секунд (5 хвилин)
     while True:
         try:
             pool = await get_db_pool()
@@ -1509,8 +1515,33 @@ async def news_repost_task():
                         mock_source_url = "https://example.com/ai-news"
                         mock_source_name = "AI News (Default)"
 
-                    mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')} від {mock_source_name}"
-                    mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство. Джерело: {mock_source_name}."
+                    # Симуляція "топової" новини за допомогою AI
+                    # Генеруємо більш якісний та "топовий" контент
+                    top_news_prompt = (
+                        f"Створи заголовок та короткий, але захоплюючий зміст (до 300 слів) для 'топової' новини, "
+                        f"яка могла б з'явитися на джерелі '{mock_source_name}' ({mock_source_url}). "
+                        f"Новина має бути актуальною, цікавою для широкої аудиторії, "
+                        f"та стосуватися сфер технологій, науки, або значних суспільних подій. "
+                        f"Використовуй українську мову. Формат: Заголовок\\n\\nЗміст."
+                    )
+                    generated_content = await make_gemini_request_with_history([{"role": "user", "parts": [{"text": top_news_prompt}]}])
+
+                    if not generated_content or "Не вдалося отримати відповідь AI." in generated_content:
+                        logger.warning("Не вдалося згенерувати 'топову' новину, використовуючи стандартний мок-контент.")
+                        mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')} від {mock_source_name}"
+                        mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство. Джерело: {mock_source_name}."
+                    else:
+                        # Розділяємо згенерований контент на заголовок та зміст
+                        parts = generated_content.split('\n\n', 1)
+                        if len(parts) >= 2:
+                            mock_title = parts[0].strip()
+                            mock_content = parts[1].strip()
+                        else:
+                            mock_title = generated_content.strip()[:100] + "..."
+                            mock_content = generated_content.strip()
+                        logger.info(f"Згенеровано 'топову' новину: {mock_title}")
+
+
                     mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
                     mock_lang = 'uk'
 
