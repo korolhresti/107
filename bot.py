@@ -40,7 +40,7 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()] # Перетворення на список int
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
 ANOTHER_BOT_CHANNEL_LINK_SELL = "https://t.me/BigmoneycreateBot"
 ANOTHER_BOT_CHANNEL_LINK_BUY = "https://t.me/+eZEMW4FMEWQxMjYy"
 NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
@@ -51,7 +51,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Ініціалізація FastAPI
-app = FastAPI()
+app = FastAPI(title="Telegram AI News Bot API", version="1.0.0")
 
 # Статичні файли для адмін-панелі
 app.mount("/static", StaticFiles(directory="."), name="static")
@@ -60,9 +60,9 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 async def get_api_key(api_key: str = Depends(api_key_header)):
-    if api_key == ADMIN_API_KEY:
-        return api_key
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Невірний API ключ")
+    if not ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ADMIN_API_KEY не налаштовано.")
+    if api_key is None or api_key != ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недійсний або відсутній ключ API.")
+    return api_key
 
 # Ініціалізація бота та диспетчера
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -76,9 +76,13 @@ db_pool: Optional[AsyncConnectionPool] = None
 async def get_db_pool():
     global db_pool
     if db_pool is None:
-        db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=False)
-        await db_pool.open()
-        logger.info("Пул БД ініціалізовано.")
+        try:
+            db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
+            async with db_pool.connection() as conn: await conn.execute("SELECT 1")
+            logger.info("Пул БД ініціалізовано.")
+        except Exception as e:
+            logger.error(f"Помилка пулу БД: {e}")
+            raise
     return db_pool
 
 # Функція для перевірки та створення таблиць
@@ -211,6 +215,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             # Перевірка, чи існує джерело за URL
+            # Змінено: використовуємо source_url та source_name з news_data
             await cur.execute("SELECT id FROM sources WHERE source_url = %s", (str(news_data['source_url']),))
             source_record = await cur.fetchone()
             source_id = None
@@ -220,8 +225,8 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 # Якщо джерела немає, додаємо його
                 await cur.execute(
                     """
-                    INSERT INTO sources (source_name, source_url, source_type, added_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO sources (user_id, source_name, source_url, source_type, added_at)
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (source_url) DO UPDATE SET
                         source_name = EXCLUDED.source_name,
                         source_type = EXCLUDED.source_type,
@@ -310,7 +315,8 @@ async def get_source_by_id(source_id: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM sources WHERE id = %s", (source_id,))
+            # Змінено: використовуємо source_name та source_url
+            await cur.execute("SELECT id, source_name, source_url, source_type, status FROM sources WHERE id = %s", (source_id,))
             return await cur.fetchone()
 
 # FSM States
@@ -977,46 +983,53 @@ async def handle_report_fake_news(callback: CallbackQuery):
 
 
 # Автоматичне виставлення новин (фонове завдання)
-
 async def fetch_and_post_news_task():
     logger.info("Запущено фонове завдання: fetch_and_post_news_task")
+    # Отримуємо всі активні джерела
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM sources WHERE is_active = TRUE")
+            # Змінено: використовуємо status = 'active'
+            await cur.execute("SELECT * FROM sources WHERE status = 'active'")
             sources = await cur.fetchall()
 
-    if not sources:
-        logger.info("Немає активних джерел для парсингу.")
-        return
-
     for source in sources:
+        news_data = None
         try:
-            parsed_data = None
-            # CHANGE: Use 'type' instead of 'source_type'
-            if source['type'] == 'rss':
-                parsed_data = await rss_parser.parse_rss_feed(source['url'])
-            elif source['type'] == 'website':
-                parsed_data = await web_parser.parse_website(source['url'])
-            elif source['type'] == 'telegram':
-                parsed_data = await telegram_parser.get_telegram_channel_posts(source['url'])
-            # CHANGE: Use 'type' instead of 'source_type'
-            elif source['type'] == 'instagram' or source['type'] == 'twitter':
-                # CHANGE: Use 'type' instead of 'source_type'
-                parsed_data = await social_media_parser.get_social_media_posts(source['url'], source['type'])
+            # Змінено: використовуємо source_type та source_url
+            if source['source_type'] == 'rss':
+                news_data = await rss_parser.parse_rss_feed(source['source_url'])
+            elif source['source_type'] == 'web':
+                parsed_data = await web_parser.parse_website(source['source_url'])
+                if parsed_data:
+                    news_data = parsed_data
+                else:
+                    # Змінено: використовуємо source_name та source_url
+                    logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
+                    continue # Пропускаємо це джерело і переходимо до наступного
+            elif source['source_type'] == 'telegram':
+                news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
+            elif source['source_type'] == 'social_media':
+                # Для social_media потрібно передавати тип платформи, наприклад 'instagram' або 'twitter'
+                # Наразі використовуємо заглушку, яка не вимагає цього
+                news_data = await social_media_parser.get_social_media_posts(source['source_url'], "general")
+            
+            if news_data:
+                news_data['source_id'] = source['id'] # Додаємо source_id для збереження
+                news_data['source_name'] = source['source_name'] # Передаємо ім'я джерела для add_news_to_db
+                news_data['source_type'] = source['source_type'] # Передаємо тип джерела для add_news_to_db
+                await add_news_to_db(news_data)
+                async with pool.connection() as conn_update:
+                    async with conn_update.cursor() as cur_update:
+                        await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
+                        await conn_update.commit()
             else:
-                # CHANGE: Use 'type' instead of 'source_type'
-                logger.warning(f"Невідомий тип джерела: {source['type']}")
-                continue
-
-            # ... (rest of your parsing and posting logic) ...
-
+                # Змінено: використовуємо source_name та source_url
+                logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
         except Exception as e:
-            # CHANGE: Use 'name' instead of 'source_name'
-            logger.warning(f"Помилка парсингу джерела {source['name']} ({source['url']}): {e}")
-
-
-
+            # Змінено: використовуємо source_name та source_url
+            logger.warning(f"Помилка парсингу джерела {source['source_name']} ({source['source_url']}): {e}")
+    
 # Планувальник завдань
 async def scheduler():
     # Запускаємо перше завдання негайно
