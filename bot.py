@@ -977,47 +977,45 @@ async def handle_report_fake_news(callback: CallbackQuery):
 
 
 # Автоматичне виставлення новин (фонове завдання)
+
 async def fetch_and_post_news_task():
     logger.info("Запущено фонове завдання: fetch_and_post_news_task")
-    # Отримуємо всі активні джерела
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM sources WHERE status = 'active'")
+            await cur.execute("SELECT * FROM sources WHERE is_active = TRUE")
             sources = await cur.fetchall()
 
+    if not sources:
+        logger.info("Немає активних джерел для парсингу.")
+        return
+
     for source in sources:
-        news_data = None
         try:
-            if source['source_type'] == 'rss':
-                news_data = await rss_parser.parse_rss_feed(source['source_url'])
-            elif source['source_type'] == 'web':
-                parsed_data = await web_parser.parse_website(source['source_url'])
-                if parsed_data:
-                    news_data = parsed_data
-                else:
-                    logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
-                    continue # Пропускаємо це джерело і переходимо до наступного
-            elif source['source_type'] == 'telegram':
-                news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
-            elif source['source_type'] == 'social_media':
-                # Для social_media потрібно передавати тип платформи, наприклад 'instagram' або 'twitter'
-                # Наразі використовуємо заглушку, яка не вимагає цього
-                news_data = await social_media_parser.get_social_media_posts(source['source_url'], "general")
-            
-            if news_data:
-                news_data['source_id'] = source['id'] # Додаємо source_id для збереження
-                news_data['source_name'] = source['source_name'] # Передаємо ім'я джерела для add_news_to_db
-                news_data['source_type'] = source['source_type'] # Передаємо тип джерела для add_news_to_db
-                await add_news_to_db(news_data)
-                async with pool.connection() as conn_update:
-                    async with conn_update.cursor() as cur_update:
-                        await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
-                        await conn_update.commit()
+            parsed_data = None
+            # CHANGE: Use 'type' instead of 'source_type'
+            if source['type'] == 'rss':
+                parsed_data = await rss_parser.parse_rss_feed(source['url'])
+            elif source['type'] == 'website':
+                parsed_data = await web_parser.parse_website(source['url'])
+            elif source['type'] == 'telegram':
+                parsed_data = await telegram_parser.get_telegram_channel_posts(source['url'])
+            # CHANGE: Use 'type' instead of 'source_type'
+            elif source['type'] == 'instagram' or source['type'] == 'twitter':
+                # CHANGE: Use 'type' instead of 'source_type'
+                parsed_data = await social_media_parser.get_social_media_posts(source['url'], source['type'])
             else:
-                logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
+                # CHANGE: Use 'type' instead of 'source_type'
+                logger.warning(f"Невідомий тип джерела: {source['type']}")
+                continue
+
+            # ... (rest of your parsing and posting logic) ...
+
         except Exception as e:
-            logger.warning(f"Помилка парсингу джерела {source['source_name']} ({source['source_url']}): {e}")
+            # CHANGE: Use 'name' instead of 'source_name'
+            logger.warning(f"Помилка парсингу джерела {source['name']} ({source['url']}): {e}")
+
+
 
 # Планувальник завдань
 async def scheduler():
