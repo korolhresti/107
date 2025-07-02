@@ -1870,7 +1870,8 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("DELETE FROM news WHERE id = %s", (news_id,))\
+            # Removed the backslash from this line
+            await cur.execute("DELETE FROM news WHERE id = %s", (news_id,))
             if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Новину не знайдено.")
             return
 
