@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS # For audio generation
+from gtts import gTTS # Для генерації аудіо
 
 load_dotenv()
 
@@ -34,7 +34,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x]
 ANOTHER_BOT_CHANNEL_LINK = "https://t.me/YourOtherBotChannel"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") # WEBHOOK_URL added
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") # WEBHOOK_URL додано
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -50,8 +50,8 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_api_key(api_key: str = Depends(api_key_header)):
-    if not ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ADMIN_API_KEY not configured.")
-    if api_key is None or api_key != ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key.")
+    if not ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ADMIN_API_KEY не налаштовано.")
+    if api_key is None or api_key != ADMIN_API_KEY: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недійсний або відсутній ключ API.")
     return api_key
 
 db_pool = None
@@ -62,9 +62,9 @@ async def get_db_pool():
         try:
             db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
             async with db_pool.connection() as conn: await conn.execute("SELECT 1")
-            print("DB pool initialized.")
+            print("Пул БД ініціалізовано.")
         except Exception as e:
-            print(f"DB pool error: {e}")
+            print(f"Помилка пулу БД: {e}")
             raise
     return db_pool
 
@@ -171,7 +171,7 @@ async def create_tables():
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(id),
                 feed_name TEXT NOT NULL,
-                filters JSONB, -- Stores JSON object with filters (e.g., {"source_ids": [1, 2, 3]})
+                filters JSONB, -- Зберігає JSON об'єкт з фільтрами (наприклад, {"source_ids": [1, 2, 3]})
                 UNIQUE (user_id, feed_name)
             );
         """)
@@ -197,10 +197,10 @@ async def create_tables():
                 user_id BIGINT PRIMARY KEY REFERENCES users(id),
                 viewed_news_count INT DEFAULT 0,
                 last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                viewed_topics JSONB DEFAULT '[]'::jsonb -- Stores a list of topics the user has viewed
+                viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігає список тем, які переглядав користувач
             );
         """)
-        logger.info("Tables checked/created.")
+        logger.info("Таблиці перевірено/створено.")
 
 async def get_user(user_id: int) -> Optional[User]:
     pool = await get_db_pool()
@@ -229,7 +229,7 @@ async def create_or_update_user(tg_user: Any) -> User:
                 await cur.execute("INSERT INTO user_stats (user_id, last_active) VALUES (%s, CURRENT_TIMESTAMP)", (tg_user.id,))
                 new_user = User(id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name,
                                 last_name=tg_user.last_name, is_admin=is_admin, language=tg_user.language_code)
-                logger.info(f"New user: {new_user.username or new_user.first_name} (ID: {new_user.id})")
+                logger.info(f"Новий користувач: {new_user.username or new_user.first_name} (ID: {new_user.id})")
                 return new_user
 
 async def get_news(news_id: int) -> Optional[News]:
@@ -306,13 +306,13 @@ async def update_user_viewed_topics(user_id: int, topics: List[str]):
             await cur.execute("UPDATE user_stats SET viewed_topics = %s::jsonb WHERE user_id = %s", (updated_topics, user_id))
 
 async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> str:
-    if not GEMINI_API_KEY: return "AI functions unavailable. GEMINI_API_KEY not set."
+    if not GEMINI_API_KEY: return "Функції AI недоступні. GEMINI_API_KEY не встановлено."
     headers = {"Content-Type": "application/json"}
     params = {"key": GEMINI_API_KEY}
     data = {"contents": messages}
     async with ClientSession() as session:
         try:
-            # Changed model to gemini-2.0-flash-lite
+            # Модель змінено на gemini-2.0-flash-lite
             async with session.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent", params=params, headers=headers, json=data) as response:
                 if response.status == 200:
                     res_json = await response.json()
@@ -321,15 +321,15 @@ async def make_gemini_request_with_history(messages: List[Dict[str, Any]]) -> st
                         if 'content' in first_candidate and 'parts' in first_candidate['content']:
                             for part in first_candidate['content']['parts']:
                                 if 'text' in part: return part['text']
-                    logger.warning(f"Gemini response missing parts: {res_json}")
-                    return "Failed to get AI response."
+                    logger.warning(f"Відповідь Gemini відсутня: {res_json}")
+                    return "Не вдалося отримати відповідь AI."
                 else:
                     err_text = await response.text()
-                    logger.error(f"Gemini API error: {response.status} - {err_text}")
-                    return f"AI error: {response.status}. Try later."
+                    logger.error(f"Помилка API Gemini: {response.status} - {err_text}")
+                    return f"Помилка AI: {response.status}. Спробуйте пізніше."
         except Exception as e:
-            logger.error(f"Network error during Gemini request: {e}")
-            return "Error contacting AI. Try later."
+            logger.error(f"Помилка мережі під час запиту Gemini: {e}")
+            return "Помилка зв'язку з AI. Спробуйте пізніше."
 
 async def ai_summarize_news(title: str, content: str) -> Optional[str]:
     prompt = f"Зроби коротке резюме цієї новини (до 150 слів). Українською мовою.\n\nЗаголовок: {title}\n\nЗміст: {content[:2000]}..."
@@ -358,7 +358,7 @@ async def ai_extract_entities(news_content: str) -> Optional[str]:
 async def ai_classify_topics(news_content: str) -> Optional[List[str]]:
     prompt = f"Класифікуй новину за 3-5 основними темами/категоріями. Перерахуй теми через кому, українською.\n\nНовина: {news_content[:2000]}..."
     response = await make_gemini_request_with_history([{"role": "user", "parts": [{"text": prompt}]}])
-    # Ensure the response is parsed into a list of strings
+    # Переконайтеся, що відповідь розпарсена в список рядків
     if response:
         return [t.strip() for t in response.split(',') if t.strip()]
     return None
@@ -501,7 +501,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             if news_obj.image_url:
                 try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, reply_markup=reply_markup, disable_notification=True)
                 except Exception as e:
-                    logger.warning(f"Failed to send photo for news {news_id}: {e}. Sending without photo.")
+                    logger.warning(f"Не вдалося надіслати фото для новини {news_id}: {e}. Надсилаю без фото.")
                     msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
             else:
                 msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
@@ -857,7 +857,7 @@ async def handle_classify_topics_callback(callback: CallbackQuery):
                 await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
                 topics = await ai_classify_topics(news_item_record['content'])
                 if topics: 
-                    # Pass Python list directly to JSONB column
+                    # Передаємо список Python безпосередньо в стовпець JSONB
                     await cur.execute("UPDATE news SET ai_classified_topics = %s WHERE id = %s", (topics, news_id))
                 else: 
                     topics = ["Не вдалося визначити теми."]
@@ -955,9 +955,9 @@ async def handle_sentiment_trend_analysis_callback(callback: CallbackQuery):
             await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
             related_news_items = []
             if main_news_obj.ai_classified_topics:
-                # Use the ?| operator to check if the JSONB array contains ANY of the provided strings
-                # The second argument to execute needs to be a tuple or list of parameters.
-                # psycopg will automatically convert a Python list of strings to a PostgreSQL TEXT array for the ?| operator.
+                # Використовуємо оператор ?| для перевірки, чи масив JSONB містить БУДЬ-ЯКИЙ з наданих рядків
+                # Другий аргумент для execute має бути кортежем або списком параметрів.
+                # psycopg автоматично перетворить список рядків Python на масив TEXT PostgreSQL для оператора ?|.
                 await cur.execute(f"""
                     SELECT id, title, content, ai_summary, lang, published_at
                     FROM news
@@ -1138,7 +1138,7 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
 
             query += " ORDER BY published_at DESC"
             
-            # Execute the query with parameters
+            # Виконайте запит з параметрами
             if params:
                 await cur.execute(query, (params[0],) if len(params) == 1 else tuple(params))
             else:
@@ -1241,7 +1241,7 @@ async def process_news_lang(callback: CallbackQuery, state: FSMContext):
                     published_at=datetime.now(), lang=lang, ai_summary=ai_summary,
                     ai_classified_topics=ai_topics, moderation_status='approved')
     await add_news(new_news)
-    logger.info(f"News {new_news.id} added and auto-approved.")
+    logger.info(f"Новину {new_news.id} додано та автоматично схвалено.")
 
     await callback.message.answer(f"✅ Новину успішно додано та згенеровано AI-пост:\n\n{post_text}", parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     await callback.message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
@@ -1273,10 +1273,10 @@ async def handle_help_menu(callback: CallbackQuery):
     await callback.answer()
 
 async def news_repost_task():
-    repost_interval = 300 # Increased interval to 300 seconds (5 minutes)
+    repost_interval = 300 # Збільшено інтервал до 300 секунд (5 хвилин)
     while True:
         try:
-            mock_title = f"AI News Update {datetime.now().strftime('%H:%M:%S')}"
+            mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')}"
             mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство."
             mock_source_url = "https://example.com/ai-news"
             mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
@@ -1298,23 +1298,23 @@ async def news_repost_task():
                                 image_url=mock_image_url, published_at=datetime.now(), lang=mock_lang,
                                 ai_summary=ai_summary, ai_classified_topics=ai_topics, moderation_status='approved')
                 await add_news(new_news)
-                logger.info(f"Auto-reposted and approved news: {new_news.id} - '{new_news.title}'")
+                logger.info(f"Автоматично репостнуто та схвалено новину: {new_news.id} - '{new_news.title}'")
             else:
-                logger.info(f"Skipped reposting news (not interesting): '{mock_title}'")
+                logger.info(f"Пропущено репост новини (нецікаво): '{mock_title}'")
         except Exception as e:
-            logger.error(f"Error in news repost task: {e}")
+            logger.error(f"Помилка в завданні репосту новин: {e}")
         await asyncio.sleep(repost_interval)
 
 async def news_digest_task():
     while True:
         now = datetime.now()
-        next_run_time = datetime(now.year, now.month, now.day, 9, 0, 0) # Daily at 9 AM
+        next_run_time = datetime(now.year, now.month, now.day, 9, 0, 0) # Щодня о 9 ранку
         if now >= next_run_time: next_run_time += timedelta(days=1)
         
         sleep_seconds = (next_run_time - now).total_seconds()
-        if sleep_seconds < 0: sleep_seconds = 0 # Should not happen if logic is correct for next day
+        if sleep_seconds < 0: sleep_seconds = 0 # Не повинно відбуватися, якщо логіка для наступного дня коректна
         
-        logger.info(f"Next digest run in {sleep_seconds:.0f} seconds.")
+        logger.info(f"Наступний запуск дайджесту через {sleep_seconds:.0f} секунд.")
         await asyncio.sleep(sleep_seconds)
 
         try:
@@ -1326,7 +1326,7 @@ async def news_digest_task():
                     for user_data in users:
                         user_id = user_data['id']
                         user_lang = user_data['language']
-                        user_filters = await get_user_filters(user_id) # This function already uses a cursor
+                        user_filters = await get_user_filters(user_id) # Ця функція вже використовує курсор
                         source_ids = user_filters.get('source_ids', [])
                         
                         query = "SELECT id, title, content, source_url, image_url, published_at, ai_summary FROM news WHERE moderation_status = 'approved' AND expires_at > NOW()"
@@ -1345,7 +1345,7 @@ async def news_digest_task():
                         # Додаємо фільтрацію за переглянутими новинами
                         query += f" AND id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = {user_id}) ORDER BY published_at DESC LIMIT 5"
                         
-                        # Execute the query with parameters
+                        # Виконайте запит з параметрами
                         if params:
                             await cur.execute(query, (params[0],) if len(params) == 1 else tuple(params))
                         else:
@@ -1368,11 +1368,11 @@ async def news_digest_task():
                             
                             try:
                                 await bot.send_message(user_id, digest_text, disable_web_page_preview=True)
-                                logger.info(f"Digest sent to user {user_id}.")
+                                logger.info(f"Дайджест надіслано користувачу {user_id}.")
                             except Exception as e:
-                                logger.error(f"Failed to send digest to user {user_id}: {e}")
+                                logger.error(f"Не вдалося надіслати дайджест користувачу {user_id}: {e}")
         except Exception as e:
-            logger.error(f"Error in news digest task: {e}")
+            logger.error(f"Помилка в завданні дайджесту новин: {e}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -1380,48 +1380,48 @@ async def startup_event():
     await create_tables()
     
     if WEBHOOK_URL and API_TOKEN:
-        # Use a fixed path for the webhook
+        # Використовуємо фіксований шлях для вебхука
         webhook_full_url = f"{WEBHOOK_URL.rstrip('/')}/telegram_webhook"
-        logger.info(f"Attempting to set webhook to: {webhook_full_url}") # Added logging
+        logger.info(f"Спроба встановити вебхук на: {webhook_full_url}") # Додано логування
         try:
-            await asyncio.sleep(5) # Added a 5-second delay
+            await asyncio.sleep(5) # Додано 5-секундну затримку
             await bot.set_webhook(url=webhook_full_url)
-            logger.info(f"Webhook successfully set to {webhook_full_url}")
+            logger.info(f"Вебхук успішно встановлено на {webhook_full_url}")
         except Exception as e:
-            logger.error(f"Failed to set webhook: {e}")
-            # Important: If the webhook cannot be set, the application will not be able to receive updates.
-            # Therefore, it is better to let it crash so that the problem is noticed.
-            raise # Re-raise the exception to stop startup if webhook fails to set
+            logger.error(f"Не вдалося встановити вебхук: {e}")
+            # Важливо: Якщо вебхук не може бути встановлений, додаток не зможе отримувати оновлення.
+            # Тому краще дозволити йому впасти, щоб проблема була помічена.
+            raise # Повторно викликаємо виняток, щоб зупинити запуск, якщо вебхук не вдається встановити
     else:
-        logger.warning("WEBHOOK_URL or BOT_TOKEN not set. Webhook will not be configured.")
-        # If WEBHOOK_URL or BOT_TOKEN are not set, the application will not work correctly with webhooks.
-        # In this case, if you want to use polling as a fallback, it needs to be enabled here.
-        # However, for production on Render, webhooks are recommended.
-        # asyncio.create_task(dp.start_polling(bot)) # Commented out to avoid conflict if webhook is not configured.
+        logger.warning("WEBHOOK_URL або BOT_TOKEN не встановлено. Вебхук не буде налаштовано.")
+        # Якщо WEBHOOK_URL або BOT_TOKEN не встановлено, додаток не буде працювати коректно з вебхуками.
+        # У цьому випадку, якщо ви хочете використовувати polling як запасний варіант, його потрібно увімкнути тут.
+        # Однак для продакшену на Render рекомендуються вебхуки.
+        # asyncio.create_task(dp.start_polling(bot)) # Закоментовано, щоб уникнути конфлікту, якщо вебхук не налаштований.
 
     asyncio.create_task(news_repost_task())
     asyncio.create_task(news_digest_task())
-    logger.info("FastAPI app started.")
+    logger.info("Додаток FastAPI запущено.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     global db_pool
     if db_pool: await db_pool.close()
-    # When the service shuts down, it is advisable to delete the webhook
+    # При вимкненні сервісу бажано видалити вебхук
     if API_TOKEN:
         try:
             await bot.delete_webhook()
-            logger.info("Webhook deleted.")
+            logger.info("Вебхук видалено.")
         except Exception as e:
-            logger.error(f"Failed to delete webhook: {e}")
-    logger.info("FastAPI app shut down.")
+            logger.error(f"Не вдалося видалити вебхук: {e}")
+    logger.info("Додаток FastAPI вимкнено.")
 
-@app.get("/health") # New health check endpoint
+@app.get("/health") # Новий ендпоінт перевірки стану
 async def health_check():
-    logger.info("Health check endpoint hit.")
+    logger.info("Виклик ендпоінту перевірки стану.")
     return {"status": "OK"}
 
-@app.post("/telegram_webhook") # Changed webhook path
+@app.post("/telegram_webhook") # Змінено шлях вебхука
 async def telegram_webhook(request: Request):
     logger.info("Отримано запит на /telegram_webhook")
     try:
@@ -1456,20 +1456,19 @@ async def get_admin_stats_api(api_key: str = Depends(get_api_key)):
             total_users = (await cur.fetchone())['count']
             await cur.execute("SELECT COUNT(*) FROM news")
             total_news = (await cur.fetchone())['count']
-            await cur.execute("SELECT COUNT(*) FROM products") # This line refers to a non-existent table "products"
-            total_products = (await cur.fetchone())['count'] # This line refers to a non-existent table "products"
-            await cur.execute("SELECT COUNT(*) FROM transactions") # This line refers to a non-existent table "transactions"
-            total_transactions = (await cur.fetchone())['count'] # This line refers to a non-existent table "transactions"
-            await cur.execute("SELECT COUNT(*) FROM reviews") # This line refers to a non-existent table "reviews"
-            total_reviews = (await cur.fetchone())['count'] # This line refers to a non-existent table "reviews"
+            # Замінено посилання на неіснуючі таблиці на заглушки
+            total_products = 0 
+            total_transactions = 0
+            total_reviews = 0 
+
             await cur.execute("SELECT COUNT(DISTINCT id) FROM users WHERE last_active >= NOW() - INTERVAL '7 days'")
             active_users_count = (await cur.fetchone())['count']
             return {
                 "total_users": total_users,
                 "total_news": total_news,
-                "total_products": total_products, # This line refers to a non-existent table "products"
-                "total_transactions": total_transactions, # This line refers to a non-existent table "transactions"
-                "total_reviews": total_reviews, # This line refers to a non-existent table "reviews"
+                "total_products": total_products,
+                "total_transactions": total_transactions,
+                "total_reviews": total_reviews,
                 "active_users_count": active_users_count
             }
 
@@ -1516,13 +1515,13 @@ async def update_admin_news_api(news_id: int, news_data: Dict[str, Any], api_key
                     params.append(v)
                 elif k == 'ai_classified_topics':
                     set_clauses.append(f"{k} = %s::jsonb")
-                    # Pass Python list directly to JSONB column
+                    # Передаємо список Python безпосередньо в стовпець JSONB
                     params.append(v)
-            if not set_clauses: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+            if not set_clauses: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Немає полів для оновлення.")
             params.append(news_id)
             await cur.execute(f"UPDATE news SET {', '.join(set_clauses)} WHERE id = %s RETURNING *", tuple(params))
             updated_rec = await cur.fetchone()
-            if not updated_rec: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
+            if not updated_rec: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Новину не знайдено.")
             return News(**updated_rec).__dict__
 
 @app.delete("/api/admin/news/{news_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1531,11 +1530,11 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("DELETE FROM news WHERE id = %s", (news_id,))
-            # Check if any row was deleted
-            if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
+            # Перевіряємо, чи був видалений будь-який рядок
+            if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Новину не знайдено.")
             return
 
-@app.post("/telegram_webhook") # Changed webhook path
+@app.post("/telegram_webhook") # Змінено шлях вебхука
 async def telegram_webhook(request: Request):
     logger.info("Отримано запит на /telegram_webhook")
     try:
