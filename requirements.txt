@@ -11,5 +11,6 @@ beautifulsoup4==4.12.3
 feedparser==6.0.10
 requests==2.32.3
 lxml==5.2.2
-html5lib==1.1 # Додано для сумісності з feedparser
-charade==4.0.0 # Додано для сумісності з feedparser
+html5lib==1.1
+charade==1.0.3 # Виправлено на існуючу версію
+httpx==0.27.0 # Додано httpx, оскільки він використовується в web_parser
