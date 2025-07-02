@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# Застосовуємо схему до бази даних
-echo "Applying database schema..."
-psql $DATABASE_URL -f schema.sql -X
+# Цей скрипт виконується при кожному запуску/перезапуску сервісу на Render
 
-# Запускаємо веб-сервер Uvicorn для bot.py
-echo "Starting Uvicorn web server for bot.py..."
-
-uvicorn bot:app --host 0.0.0.0 --port 10000
-
+echo "Запуск веб-сервера Uvicorn..."
+# Запускаємо веб-сервер на порту, який надає Render (зазвичай 10000)
+uvicorn bot:app --host 0.0.0.0 --port ${PORT:-10000}
