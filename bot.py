@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import json
 import os
 from typing import List, Optional, Dict, Any, Union
-import random # Додано для випадкового вибору джерела
+import random
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode, ChatAction
@@ -25,7 +25,13 @@ from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS # Для генерації аудіо
+from gtts import gTTS
+
+# Імпортуємо нові парсери
+from parsers import web_parser
+from parsers import telegram_parser
+from parsers import rss_parser
+from parsers import social_media_parser
 
 load_dotenv()
 
@@ -34,10 +40,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x]
-# Оновлені посилання на Telegram-канали
 ANOTHER_BOT_CHANNEL_LINK_SELL = "https://t.me/BigmoneycreateBot"
 ANOTHER_BOT_CHANNEL_LINK_BUY = "https://t.me/+eZEMW4FMEWQxMjYy"
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234") # Канал для публікації новин
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -135,6 +140,10 @@ class AIAssistant(StatesGroup):
     what_if_news_id = State()
     waiting_for_youtube_interview_url = State()
 
+class ReportFakeNews(StatesGroup):
+    waiting_for_report_details = State()
+    news_id_to_report = State()
+
 class FilterSetup(StatesGroup):
     waiting_for_source_selection = State()
 
@@ -144,8 +153,6 @@ class LanguageSelection(StatesGroup):
 async def create_tables():
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        # Оновлено CREATE TABLE users для включення всіх полів
-        # Змінено id на BIGINT
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT PRIMARY KEY,
@@ -170,7 +177,6 @@ async def create_tables():
                 telegram_id BIGINT
             );
         """)
-        # Додавання відсутніх стовпців до users, якщо вони не були додані раніше
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(255);")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(255);")
@@ -250,7 +256,6 @@ async def create_tables():
         """)
         await conn.execute("ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS viewed_topics JSONB DEFAULT '[]'::jsonb;")
 
-        # Додавання інших таблиць, якщо їх немає
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS comments (
                 id SERIAL PRIMARY KEY,
@@ -263,7 +268,7 @@ async def create_tables():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS reports (
                 id SERIAL PRIMARY KEY,
-                user_id INT REFERENCES users(id),
+                user_id BIGINT REFERENCES users(id),
                 report_type TEXT NOT NULL,
                 target_id INT,
                 details JSONB,
@@ -339,7 +344,6 @@ async def create_tables():
             );
         """)
 
-        # Створення або перестворення індексів
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_news_published_expires_moderation ON news (published_at DESC, expires_at, moderation_status);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_user_type_value ON blocks (user_id, block_type, value);")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks (user_id);")
@@ -373,7 +377,6 @@ async def create_or_update_user(tg_user: Any) -> User:
                 return user
             else:
                 is_admin = tg_user.id in ADMIN_IDS
-                # Ensure that username, first_name, last_name are not None before passing to DB
                 username = getattr(tg_user, 'username', None)
                 first_name = getattr(tg_user, 'first_name', None)
                 last_name = getattr(tg_user, 'last_name', None)
@@ -428,7 +431,7 @@ async def update_user_filters(user_id: int, filters: Dict[str, Any]):
                 """INSERT INTO custom_feeds (user_id, feed_name, filters)
                 VALUES (%s, 'default_feed', %s::jsonb)
                 ON CONFLICT (user_id, feed_name) DO UPDATE SET filters = EXCLUDED.filters""",
-                (user_id, json.dumps(filters)) # Використовуємо json.dumps для JSONB
+                (user_id, json.dumps(filters))
             )
 
 async def get_sources() -> List[Dict[str, Any]]:
@@ -588,10 +591,9 @@ def get_main_menu_keyboard():
     kb.add(InlineKeyboardButton(text="🧠 AI-функції (Новини)", callback_data="ai_news_functions_menu"))
     kb.add(InlineKeyboardButton(text="⚙️ Налаштування", callback_data="settings_menu"))
     kb.add(InlineKeyboardButton(text="❓ Допомога", callback_data="help_menu"))
-    # Змінено розташування кнопок "Мова" та "Допоможи купити"
     kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu"))
     kb.add(InlineKeyboardButton(text="🛍️ Допоможи купити", url=ANOTHER_BOT_CHANNEL_LINK_BUY))
-    kb.add(InlineKeyboardButton(text="🤝 Допоможи продати", url=ANOTHER_BOT_CHANNEL_LINK_SELL)) # Залишено окремо
+    kb.add(InlineKeyboardButton(text="🤝 Допоможи продати", url=ANOTHER_BOT_CHANNEL_LINK_SELL))
     kb.adjust(2)
     return kb.as_markup()
 
@@ -606,7 +608,7 @@ def get_settings_menu_keyboard():
     kb = InlineKeyboardBuilder()
     kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
     kb.add(InlineKeyboardButton(text="🔔 Сповіщення про новини", callback_data="toggle_auto_notifications"))
-    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu")) # Додано кнопку "Мова"
+    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu"))
     kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
     kb.adjust(1)
     return kb.as_markup()
@@ -646,8 +648,9 @@ def get_news_keyboard(news_id: int, current_index: int, total_count: int):
         [InlineKeyboardButton(text="📝 Резюме для аудиторії", callback_data=f"audience_summary_{news_id}"),
          InlineKeyboardButton(text="📜 Історичні аналоги", callback_data=f"historical_analogues_{news_id}"),
          InlineKeyboardButton(text="💥 Аналіз впливу", callback_data=f"impact_analysis_{news_id}")],
+        [InlineKeyboardButton(text="🤔 Сценарій 'Що якби...'", callback_data=f"what_if_scenario_{news_id}"),
+         InlineKeyboardButton(text="🚩 Повідомити про фейк", callback_data=f"report_fake_news_{news_id}")],
     ]
-    # Додаємо кнопки навігації "Назад" та "Далі"
     nav_buttons = []
     if current_index > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"prev_news"))
@@ -657,7 +660,6 @@ def get_news_keyboard(news_id: int, current_index: int, total_count: int):
     if nav_buttons:
         buttons.append(nav_buttons)
     
-    # Додаємо кнопку "Назад до головного" в окремий ряд
     buttons.append([InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -687,11 +689,10 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
             if news_obj.image_url: message_text += f"\n\n[Зображення новини]({news_obj.image_url})"
 
-            reply_markup = get_news_keyboard(news_obj.id, current_index, total_count) # Передаємо індекс та загальну кількість
+            reply_markup = get_news_keyboard(news_obj.id, current_index, total_count)
             
             msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=False)
             
-            # Correct way to get FSM context outside of a handler
             state_context = FSMContext(storage=dp.storage, key=types.Chat(id=chat_id).model_copy(deep=True), bot=bot)
             await state_context.update_data(last_message_id=msg.message_id)
             
@@ -699,7 +700,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             if news_obj.ai_classified_topics: await update_user_viewed_topics(chat_id, news_obj.ai_classified_topics)
 
 @router.message(CommandStart())
-@router.message(Command("begin")) # Додано команду /begin
+@router.message(Command("begin"))
 async def command_begin_handler(message: Message, state: FSMContext) -> None:
     logger.info(f"Команда /begin (або /start) отримана та обробляється для користувача: {message.from_user.id} ({message.from_user.full_name})")
     await state.clear()
@@ -718,7 +719,8 @@ async def command_menu_handler(message: Message, state: FSMContext):
     AIAssistant.waiting_for_term_to_explain, AIAssistant.waiting_for_fact_to_check,
     AIAssistant.waiting_for_audience_summary_type, AIAssistant.waiting_for_what_if_query,
     AIAssistant.waiting_for_youtube_interview_url, FilterSetup.waiting_for_source_selection,
-    LanguageSelection.waiting_for_language
+    LanguageSelection.waiting_for_language,
+    ReportFakeNews.waiting_for_report_details
 ))
 async def cmd_cancel(message: Message, state: FSMContext):
     if await state.get_state() is None:
@@ -732,7 +734,7 @@ async def handle_my_profile_command(message: Message):
     user_id = message.from_user.id
     user_record = await get_user(user_id)
     if not user_record:
-        await message.answer("Ваш профіль не знайдено. Спробуйте /begin.") # Оновлено
+        await message.answer("Ваш профіль не знайдено. Спробуйте /begin.")
         return
     username = user_record.username or user_record.first_name
     is_admin_str = "Так" if user_record.is_admin else "Ні"
@@ -766,7 +768,7 @@ async def process_ai_news_functions_menu(callback: CallbackQuery):
 async def process_settings_menu(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not user:
-        await callback.message.answer("Будь ласка, почніть з /begin.") # Оновлено
+        await callback.message.answer("Будь ласка, почніть з /begin.")
         await callback.answer()
         return
     
@@ -775,7 +777,7 @@ async def process_settings_menu(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
     kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
-    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu")) # Додано кнопку "Мова"
+    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu"))
     kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
     kb.adjust(1)
     await callback.message.edit_text("⚙️ *Налаштування:*", reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN)
@@ -977,8 +979,6 @@ async def handle_translate_callback(callback: CallbackQuery):
             user_lang_record = await get_user(callback.from_user.id)
             user_target_lang = user_lang_record.language if user_lang_record else 'uk'
 
-            # Визначаємо мову перекладу: якщо мова новини співпадає з мовою користувача,
-            # перекладаємо на англійську, інакше - на мову користувача.
             target_lang = 'en' if news_item['lang'] == user_target_lang else user_target_lang
             
             await callback.message.answer(f"⏳ Перекладаю новину на {target_lang.upper()} за допомогою AI...")
@@ -1325,7 +1325,6 @@ async def process_what_if_query(message: Message, state: FSMContext):
             await message.answer(f"🤔 <b>Сценарій 'Що якби...' для новини (ID: {news_id_for_context}):</b>\n\n{ai_what_if_scenario}", parse_mode=ParseMode.HTML)
     await state.clear()
 
-# --- New handlers for adding sources ---
 @router.callback_query(F.data == "add_source")
 async def add_source_command(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddSource.waiting_for_source_link)
@@ -1355,8 +1354,8 @@ async def process_source_name(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="Веб-сайт", callback_data="source_type_web")],
         [InlineKeyboardButton(text="Telegram-канал", callback_data="source_type_telegram")],
         [InlineKeyboardButton(text="RSS-стрічка", callback_data="source_type_rss")],
-        [InlineKeyboardButton(text="Twitter", callback_data="source_type_twitter")],
-        [InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_add_source")] # Додано кнопку скасування
+        [InlineKeyboardButton(text="Instagram", callback_data="source_type_instagram")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_add_source")]
     ])
     await message.answer("Оберіть тип джерела:", reply_markup=source_type_keyboard)
 
@@ -1398,7 +1397,38 @@ async def cancel_add_source_callback(callback: CallbackQuery, state: FSMContext)
 async def process_source_type_invalid(message: Message):
     await message.answer("Будь ласка, оберіть тип джерела за допомогою кнопок, або введіть /cancel.")
 
-# --- End new handlers for adding sources ---
+# Функція для парсингу контенту з джерела
+async def parse_source_content(source: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Викликає відповідний парсер залежно від типу джерела.
+    """
+    source_type = source['type']
+    source_link = source['link']
+    
+    parsed_data = None
+    if source_type == 'web':
+        parsed_data = await web_parser.parse_website(source_link)
+    elif source_type == 'telegram':
+        parsed_data = await telegram_parser.get_telegram_channel_posts(source_link)
+    elif source_type == 'rss':
+        parsed_data = await rss_parser.parse_rss_feed(source_link)
+    elif source_type in ['twitter', 'instagram']: # Обробляємо обидва типи соцмереж
+        parsed_data = await social_media_parser.get_social_media_posts(source_link, source_type)
+    else:
+        logger.warning(f"Невідомий тип джерела для парсингу: {source_type}")
+
+    if parsed_data:
+        # Додаємо інформацію про джерело до спарсених даних
+        parsed_data['source_url'] = source_link
+        # Якщо парсер не повернув title/content, використовуємо заглушки
+        parsed_data['title'] = parsed_data.get('title', f"Новина з {source['name']}")
+        parsed_data['content'] = parsed_data.get('content', "Зміст новини не вдалося отримати.")
+        parsed_data['image_url'] = parsed_data.get('image_url', "https://placehold.co/600x400/ADE8F4/000000?text=News")
+        parsed_data['published_at'] = parsed_data.get('published_at', datetime.now())
+        parsed_data['lang'] = parsed_data.get('lang', 'uk')
+    
+    return parsed_data
+
 
 @router.callback_query(F.data == "my_news")
 async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
@@ -1458,7 +1488,7 @@ async def process_next_news(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Це остання новина.", show_alert=True)
     await callback.answer()
 
-@router.callback_query(NewsBrowse.Browse_news, F.data == "prev_news") # Новий обробник для кнопки "Назад"
+@router.callback_query(NewsBrowse.Browse_news, F.data == "prev_news")
 async def process_prev_news(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     news_ids = data.get('news_ids', [])
@@ -1472,12 +1502,66 @@ async def process_prev_news(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Це перша новина.", show_alert=True)
     await callback.answer()
 
+@router.callback_query(F.data.startswith("report_fake_news_"))
+async def handle_report_fake_news_callback(callback: CallbackQuery, state: FSMContext):
+    news_id = int(callback.data.split('_')[3])
+    await state.update_data(news_id_to_report=news_id)
+    await state.set_state(ReportFakeNews.waiting_for_report_details)
+    await callback.message.answer("🚩 Ви збираєтеся повідомити про цю новину як про фейкову. Будь ласка, коротко поясніть, чому ви вважаєте її фейковою (надайте деталі, якщо є). Або введіть /cancel для скасування.")
+    await callback.answer()
+
+@router.message(ReportFakeNews.waiting_for_report_details, F.text)
+async def process_report_details(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    data = await state.get_data()
+    news_id = data.get('news_id_to_report')
+    report_details = message.text.strip()
+
+    if not news_id:
+        await message.answer("Контекст новини втрачено. Спробуйте ще раз через /my_news.")
+        await state.clear()
+        return
+
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """INSERT INTO reports (user_id, report_type, target_id, details, created_at)
+                VALUES (%s, %s, %s, %s::jsonb, CURRENT_TIMESTAMP)""",
+                (user_id, 'fake_news', news_id, json.dumps({"reason": report_details}))
+            )
+            logger.info(f"Користувач {user_id} повідомив про фейкову новину ID: {news_id}. Деталі: {report_details}")
+
+            await cur.execute("SELECT title, content FROM news WHERE id = %s", (news_id,))
+            news_item = await cur.fetchone()
+            if not news_item:
+                await message.answer("Новину для перевірки не знайдено.")
+                await state.clear()
+                return
+
+            await message.answer("⏳ Перевіряю новину на ознаки фейку за допомогою AI...")
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+
+            ai_fake_check_result = await ai_check_news_for_fakes(news_item['title'], news_item['content'])
+            
+            if ai_fake_check_result:
+                await message.answer(f"✅ <b>Результат AI-перевірки на фейк для новини (ID: {news_id}):</b>\n\n{ai_fake_check_result}", parse_mode=ParseMode.HTML)
+            else:
+                await message.answer("❌ AI не зміг надати оцінку щодо фейковості новини.")
+    
+    await state.clear()
+    await message.answer("Дякуємо за ваш звіт! Ваша інформація допоможе покращити якість новин.")
+    await message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+
+@router.message(ReportFakeNews.waiting_for_report_details)
+async def process_report_details_invalid(message: Message):
+    await message.answer("Будь ласка, введіть деталі вашого звіту текстом, або введіть /cancel.")
 
 @router.callback_query(F.data == "help_menu")
 async def handle_help_menu(callback: CallbackQuery):
     help_text = (
         "<b>Доступні команди:</b>\n"
-        "/begin - Почати роботу з ботом / Головне меню\n" # Оновлено
+        "/begin - Почати роботу з ботом / Головне меню\n"
         "/menu - Головне меню\n"
         "/cancel - Скасувати поточну дію\n"
         "/myprofile - Переглянути ваш профіль\n"
@@ -1496,87 +1580,73 @@ async def handle_help_menu(callback: CallbackQuery):
     await callback.answer()
 
 async def news_repost_task():
-    repost_interval = 300 # Змінено інтервал до 300 секунд (5 хвилин)
+    repost_interval = 300 # Інтервал 300 секунд (5 хвилин)
     while True:
         try:
             pool = await get_db_pool()
             async with pool.connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
-                    # Отримуємо всі активні джерела
                     await cur.execute("SELECT id, name, link, type FROM sources WHERE status = 'active'")
                     available_sources = await cur.fetchall()
 
-                    selected_source = None
-                    if available_sources:
-                        selected_source = random.choice(available_sources)
-                        mock_source_url = selected_source['link']
-                        mock_source_name = selected_source['name']
-                    else:
-                        mock_source_url = "https://example.com/ai-news"
-                        mock_source_name = "AI News (Default)"
+                    if not available_sources:
+                        logger.info("Немає активних джерел для парсингу. Пропускаю репост.")
+                        await asyncio.sleep(repost_interval)
+                        continue
 
-                    # Симуляція "топової" новини за допомогою AI
-                    # Генеруємо більш якісний та "топовий" контент
-                    top_news_prompt = (
-                        f"Створи заголовок та короткий, але захоплюючий зміст (до 300 слів) для 'топової' новини, "
-                        f"яка могла б з'явитися на джерелі '{mock_source_name}' ({mock_source_url}). "
-                        f"Новина має бути актуальною, цікавою для широкої аудиторії, "
-                        f"та стосуватися сфер технологій, науки, або значних суспільних подій. "
-                        f"Використовуй українську мову. Формат: Заголовок\\n\\nЗміст."
-                    )
-                    generated_content = await make_gemini_request_with_history([{"role": "user", "parts": [{"text": top_news_prompt}]}])
+                    selected_source = random.choice(available_sources)
+                    
+                    # Крок 1: Збір Даних (Парсери)
+                    parsed_news_data = await parse_source_content(selected_source)
 
-                    if not generated_content or "Не вдалося отримати відповідь AI." in generated_content:
-                        logger.warning("Не вдалося згенерувати 'топову' новину, використовуючи стандартний мок-контент.")
-                        mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')} від {mock_source_name}"
-                        mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство. Джерело: {mock_source_name}."
-                    else:
-                        # Розділяємо згенерований контент на заголовок та зміст
-                        parts = generated_content.split('\n\n', 1)
-                        if len(parts) >= 2:
-                            mock_title = parts[0].strip()
-                            mock_content = parts[1].strip()
-                        else:
-                            mock_title = generated_content.strip()[:100] + "..."
-                            mock_content = generated_content.strip()
-                        logger.info(f"Згенеровано 'топову' новину: {mock_title}")
+                    if not parsed_news_data:
+                        logger.warning(f"Не вдалося спарсити контент з джерела: {selected_source['name']} ({selected_source['link']}). Пропускаю.")
+                        await asyncio.sleep(repost_interval)
+                        continue
 
+                    mock_title = parsed_news_data['title']
+                    mock_content = parsed_news_data['content']
+                    mock_source_url = parsed_news_data['source_url']
+                    mock_image_url = parsed_news_data['image_url']
+                    mock_lang = parsed_news_data['lang']
+                    published_at = parsed_news_data['published_at']
 
-                    mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
-                    mock_lang = 'uk'
-
-                    await cur.execute("SELECT viewed_topics FROM user_stats LIMIT 1")
+                    # Крок 3.3: Персоналізована Фільтрація (імітація)
+                    # Отримуємо інтереси користувачів для імітації фільтрації
+                    await cur.execute("SELECT viewed_topics FROM user_stats LIMIT 1") # Беремо інтереси одного користувача для прикладу
                     user_stats_rec = await cur.fetchone()
                     user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
-            is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
+                    is_interesting = await ai_filter_interesting_news(mock_title, mock_content, user_interests)
 
-            if is_interesting:
-                ai_summary = await ai_summarize_news(mock_title, mock_content)
-                ai_topics = await ai_classify_topics(mock_content)
-                new_news = News(id=0, title=mock_title, content=mock_content, source_url=mock_source_url,
-                                image_url=mock_image_url, published_at=datetime.now(), lang=mock_lang,
-                                ai_summary=ai_summary, ai_classified_topics=ai_topics, moderation_status='approved')
-                await add_news(new_news)
-                logger.info(f"Автоматично репостнуто та схвалено новину: {new_news.id} - '{new_news.title}'")
-                
-                # Спробуємо опублікувати новину в канал
-                if NEWS_CHANNEL_LINK:
-                    try:
-                        post_text = await ai_formulate_news_post(new_news.title, new_news.ai_summary or new_news.content, new_news.source_url)
+                    if is_interesting:
+                        # Крок 2: Обробка та Нормалізація Контенту (AI-функції)
+                        ai_summary = await ai_summarize_news(mock_title, mock_content)
+                        ai_topics = await ai_classify_topics(mock_content)
                         
-                        channel_identifier = NEWS_CHANNEL_LINK
-                        if channel_identifier.startswith("https://t.me/"):
-                            channel_identifier = "@" + channel_identifier.split('/')[-1]
-                        elif not channel_identifier.startswith("@"):
-                            channel_identifier = "@" + channel_identifier
+                        new_news = News(id=0, title=mock_title, content=mock_content, source_url=mock_source_url,
+                                        image_url=mock_image_url, published_at=published_at, lang=mock_lang,
+                                        ai_summary=ai_summary, ai_classified_topics=ai_topics, moderation_status='approved')
+                        await add_news(new_news)
+                        logger.info(f"Автоматично репостнуто та схвалено новину: {new_news.id} - '{new_news.title}'")
+                        
+                        # Крок 4: Автоматична Публікація
+                        if NEWS_CHANNEL_LINK:
+                            try:
+                                post_text = await ai_formulate_news_post(new_news.title, new_news.ai_summary or new_news.content, new_news.source_url)
+                                
+                                channel_identifier = NEWS_CHANNEL_LINK
+                                if channel_identifier.startswith("https://t.me/"):
+                                    channel_identifier = "@" + channel_identifier.split('/')[-1]
+                                elif not channel_identifier.startswith("@"):
+                                    channel_identifier = "@" + channel_identifier
 
-                        await bot.send_message(chat_id=channel_identifier, text=post_text, disable_web_page_preview=False)
-                        logger.info(f"Новину {new_news.id} опубліковано в канал {NEWS_CHANNEL_LINK}.")
-                    except Exception as e:
-                        logger.error(f"Помилка публікації новини в канал {NEWS_CHANNEL_LINK}: {e}")
-            else:
-                logger.info(f"Пропущено репост новини (нецікаво): '{mock_title}'")
+                                await bot.send_message(chat_id=channel_identifier, text=post_text, disable_web_page_preview=False)
+                                logger.info(f"Новину {new_news.id} опубліковано в канал {NEWS_CHANNEL_LINK}.")
+                            except Exception as e:
+                                logger.error(f"Помилка публікації новини в канал {NEWS_CHANNEL_LINK}: {e}")
+                    else:
+                        logger.info(f"Пропущено репост новини (нецікаво): '{mock_title}'")
         except Exception as e:
             logger.error(f"Помилка в завданні репосту новин: {e}")
         await asyncio.sleep(repost_interval)
@@ -1584,11 +1654,11 @@ async def news_repost_task():
 async def news_digest_task():
     while True:
         now = datetime.now()
-        next_run_time = datetime(now.year, now.month, now.day, 9, 0, 0) # Щодня о 9 ранку
+        next_run_time = datetime(now.year, now.month, now.day, 9, 0, 0)
         if now >= next_run_time: next_run_time += timedelta(days=1)
         
         sleep_seconds = (next_run_time - now).total_seconds()
-        if sleep_seconds < 0: sleep_seconds = 0 # Не повинно відбуватися, якщо логіка для наступного дня коректна
+        if sleep_seconds < 0: sleep_seconds = 0
         
         logger.info(f"Наступний запуск дайджесту через {sleep_seconds:.0f} секунд.")
         await asyncio.sleep(sleep_seconds)
@@ -1720,9 +1790,9 @@ async def get_admin_stats_api(api_key: str = Depends(get_api_key)):
             total_users = (await cur.fetchone())['count']
             await cur.execute("SELECT COUNT(*) FROM news")
             total_news = (await cur.fetchone())['count']
-            total_products = 0 
+            total_products = 0
             total_transactions = 0
-            total_reviews = 0 
+            total_reviews = 0
 
             await cur.execute("SELECT COUNT(DISTINCT id) FROM users WHERE last_active >= NOW() - INTERVAL '7 days'")
             active_users_count = (await cur.fetchone())['count']
@@ -1778,7 +1848,7 @@ async def update_admin_news_api(news_id: int, news_data: Dict[str, Any], api_key
                     params.append(v)
                 elif k == 'ai_classified_topics':
                     set_clauses.append(f"{k} = %s::jsonb")
-                    params.append(json.dumps(v)) # Використовуємо json.dumps для JSONB
+                    params.append(json.dumps(v))
             if not set_clauses: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Немає полів для оновлення.")
             params.append(news_id)
             await cur.execute(f"UPDATE news SET {', '.join(set_clauses)} WHERE id = %s RETURNING *", tuple(params))
@@ -1811,3 +1881,4 @@ async def telegram_webhook(request: Request):
 @router.message()
 async def echo_handler(message: types.Message) -> None:
     await message.answer("Команду не зрозуміло. Скористайтеся /menu.")
+
