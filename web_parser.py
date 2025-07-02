@@ -2,6 +2,7 @@ import asyncio
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 import httpx # Використовуємо httpx для асинхронних запитів
+from datetime import datetime # <--- ДОДАНО: Імпорт datetime
 
 async def parse_website(url: str) -> Optional[Dict[str, Any]]:
     """
@@ -47,7 +48,7 @@ async def parse_website(url: str) -> Optional[Dict[str, Any]]:
 
 # Для тестування (якщо потрібно запускати окремо)
 if __name__ == "__main__":
-    from datetime import datetime
+    # from datetime import datetime # Цей імпорт тепер на початку файлу
     async def test_parser():
         print("Тестування web_parser...")
         # Приклад використання: замініть на реальне посилання
