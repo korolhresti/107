@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import json
 import os
 from typing import List, Optional, Dict, Any, Union
+import random # Додано для випадкового вибору джерела
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode, ChatAction
@@ -36,7 +37,7 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x]
 # Оновлені посилання на Telegram-канали
 ANOTHER_BOT_CHANNEL_LINK_SELL = "https://t.me/BigmoneycreateBot"
 ANOTHER_BOT_CHANNEL_LINK_BUY = "https://t.me/+eZEMW4FMEWQxMjYy"
-NEWS_CHANNEL_LINK = "https://t.me/newsone234" # Канал для публікації новин
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234") # Канал для публікації новин
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -628,7 +629,7 @@ def get_language_selection_keyboard():
     kb.row(InlineKeyboardButton(text="⬅️ Назад до налаштувань", callback_data="settings_menu"))
     return kb.as_markup()
 
-def get_news_keyboard(news_id: int):
+def get_news_keyboard(news_id: int, current_index: int, total_count: int):
     buttons = [
         [InlineKeyboardButton(text="📝 AI-резюме", callback_data=f"ai_summary_{news_id}"),
          InlineKeyboardButton(text="🌐 Перекласти", callback_data=f"translate_{news_id}"),
@@ -642,9 +643,17 @@ def get_news_keyboard(news_id: int):
         [InlineKeyboardButton(text="📝 Резюме для аудиторії", callback_data=f"audience_summary_{news_id}"),
          InlineKeyboardButton(text="📜 Історичні аналоги", callback_data=f"historical_analogues_{news_id}"),
          InlineKeyboardButton(text="💥 Аналіз впливу", callback_data=f"impact_analysis_{news_id}")],
-        [InlineKeyboardButton(text="🤔 Сценарії 'Що якби...'", callback_data=f"what_if_scenario_{news_id}"),
-         InlineKeyboardButton(text="➡️ Далі", callback_data=f"next_news")],
     ]
+    # Додаємо кнопки навігації "Назад" та "Далі"
+    nav_buttons = []
+    if current_index > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"prev_news"))
+    if current_index < total_count - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Далі", callback_data=f"next_news"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def send_news_to_user(chat_id: int, news_id: int, current_index: int, total_count: int):
@@ -672,7 +681,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
             if news_obj.image_url: message_text += f"\n\n[Зображення новини]({news_obj.image_url})"
 
-            reply_markup = get_news_keyboard(news_obj.id)
+            reply_markup = get_news_keyboard(news_obj.id, current_index, total_count) # Передаємо індекс та загальну кількість
             
             msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=False)
             
@@ -684,8 +693,9 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             if news_obj.ai_classified_topics: await update_user_viewed_topics(chat_id, news_obj.ai_classified_topics)
 
 @router.message(CommandStart())
-async def command_start_handler(message: Message, state: FSMContext) -> None:
-    logger.info(f"Команда /start отримана та обробляється для користувача: {message.from_user.id} ({message.from_user.full_name})")
+@router.message(Command("begin")) # Додано команду /begin
+async def command_begin_handler(message: Message, state: FSMContext) -> None:
+    logger.info(f"Команда /begin (або /start) отримана та обробляється для користувача: {message.from_user.id} ({message.from_user.full_name})")
     await state.clear()
     await create_or_update_user(message.from_user)
     await message.answer(f"Привіт, {hbold(message.from_user.full_name)}! 👋\n\nЯ ваш особистий новинний помічник з AI-функціями. Оберіть дію:", reply_markup=get_main_menu_keyboard())
@@ -716,7 +726,7 @@ async def handle_my_profile_command(message: Message):
     user_id = message.from_user.id
     user_record = await get_user(user_id)
     if not user_record:
-        await message.answer("Ваш профіль не знайдено. Спробуйте /start.")
+        await message.answer("Ваш профіль не знайдено. Спробуйте /begin.") # Оновлено
         return
     username = user_record.username or user_record.first_name
     is_admin_str = "Так" if user_record.is_admin else "Ні"
@@ -750,7 +760,7 @@ async def process_ai_news_functions_menu(callback: CallbackQuery):
 async def process_settings_menu(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not user:
-        await callback.message.answer("Будь ласка, почніть з /start.")
+        await callback.message.answer("Будь ласка, почніть з /begin.") # Оновлено
         await callback.answer()
         return
     
@@ -759,7 +769,7 @@ async def process_settings_menu(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.add(InlineKeyboardButton(text="🔍 Фільтри новин", callback_data="news_filters_menu"))
     kb.add(InlineKeyboardButton(text=toggle_btn_text, callback_data="toggle_auto_notifications"))
-    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu"))
+    kb.add(InlineKeyboardButton(text="🌐 Мова", callback_data="language_selection_menu")) # Додано кнопку "Мова"
     kb.add(InlineKeyboardButton(text="⬅️ Назад до головного", callback_data="main_menu"))
     kb.adjust(1)
     await callback.message.edit_text("⚙️ *Налаштування:*", reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN)
@@ -1313,7 +1323,7 @@ async def process_what_if_query(message: Message, state: FSMContext):
 @router.callback_query(F.data == "add_source")
 async def add_source_command(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddSource.waiting_for_source_link)
-    await callback.message.answer("Будь ласка, надішліть посилання на джерело (наприклад, RSS-стрічку, Telegram-канал, веб-сайт).")
+    await callback.message.answer("Будь ласка, надішліть посилання на джерело (наприклад, RSS-стрічку, Telegram-канал, веб-сайт). Або введіть /cancel для скасування.")
     await callback.answer()
 
 @router.message(AddSource.waiting_for_source_link, F.text.regexp(r"https?://[^\s]+"))
@@ -1321,7 +1331,7 @@ async def process_source_link(message: Message, state: FSMContext):
     source_link = message.text
     await state.update_data(source_link=source_link)
     await state.set_state(AddSource.waiting_for_source_name)
-    await message.answer("Будь ласка, введіть назву для цього джерела (наприклад, 'BBC News', 'Мій Telegram Канал').")
+    await message.answer("Будь ласка, введіть назву для цього джерела (наприклад, 'BBC News', 'Мій Telegram Канал'). Або введіть /cancel для скасування.")
 
 @router.message(AddSource.waiting_for_source_link)
 async def process_source_link_invalid(message: Message):
@@ -1331,7 +1341,7 @@ async def process_source_link_invalid(message: Message):
 async def process_source_name(message: Message, state: FSMContext):
     source_name = message.text.strip()
     if not source_name:
-        await message.answer("Назва джерела не може бути порожньою. Будь ласка, введіть назву.")
+        await message.answer("Назва джерела не може бути порожньою. Будь ласка, введіть назву. Або введіть /cancel для скасування.")
         return
     await state.update_data(source_name=source_name)
     await state.set_state(AddSource.waiting_for_source_type)
@@ -1339,7 +1349,8 @@ async def process_source_name(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="Веб-сайт", callback_data="source_type_web")],
         [InlineKeyboardButton(text="Telegram-канал", callback_data="source_type_telegram")],
         [InlineKeyboardButton(text="RSS-стрічка", callback_data="source_type_rss")],
-        [InlineKeyboardButton(text="Twitter", callback_data="source_type_twitter")]
+        [InlineKeyboardButton(text="Twitter", callback_data="source_type_twitter")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_add_source")] # Додано кнопку скасування
     ])
     await message.answer("Оберіть тип джерела:", reply_markup=source_type_keyboard)
 
@@ -1359,7 +1370,7 @@ async def process_source_type(callback: CallbackQuery, state: FSMContext):
                     (source_name, source_link, source_type)
                 )
                 new_source_id = (await cur.fetchone())['id']
-                await callback.message.edit_text(f"✅ Джерело '{source_name}' (ID: {new_source_id}) успішно додано! Наразі бот не автоматично читає новини з нових джерел, але ви можете використовувати це джерело у своїх фільтрах.")
+                await callback.message.edit_text(f"✅ Джерело '{source_name}' (ID: {new_source_id}) успішно додано! Наразі бот автоматично генерує мок-новини, використовуючи ваші додані джерела для демонстрації. Для повноцінного парсингу потрібна додаткова розробка.")
                 logger.info(f"Нове джерело додано: {source_name} ({source_link}, Type: {source_type})")
             except psycopg.errors.UniqueViolation:
                 await callback.message.edit_text("❌ Це джерело вже існує в базі даних.")
@@ -1369,6 +1380,12 @@ async def process_source_type(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
     await callback.message.answer("Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+
+@router.callback_query(AddSource.waiting_for_source_type, F.data == "cancel_add_source")
+async def cancel_add_source_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("✅ Додавання джерела скасовано.", reply_markup=get_main_menu_keyboard())
+    await state.clear()
+    await callback.answer()
 
 @router.message(AddSource.waiting_for_source_name)
 @router.message(AddSource.waiting_for_source_type)
@@ -1435,11 +1452,26 @@ async def process_next_news(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Це остання новина.", show_alert=True)
     await callback.answer()
 
+@router.callback_query(NewsBrowse.Browse_news, F.data == "prev_news") # Новий обробник для кнопки "Назад"
+async def process_prev_news(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    news_ids = data.get('news_ids', [])
+    current_index = data.get('news_index', 0)
+    if current_index > 0:
+        new_index = current_index - 1
+        await state.update_data(news_index=new_index)
+        await callback.message.delete()
+        await send_news_to_user(callback.message.chat.id, news_ids[new_index], new_index, len(news_ids))
+    else:
+        await callback.answer("Це перша новина.", show_alert=True)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "help_menu")
 async def handle_help_menu(callback: CallbackQuery):
     help_text = (
         "<b>Доступні команди:</b>\n"
-        "/start - Почати роботу з ботом\n"
+        "/begin - Почати роботу з ботом / Головне меню\n" # Оновлено
         "/menu - Головне меню\n"
         "/cancel - Скасувати поточну дію\n"
         "/myprofile - Переглянути ваш профіль\n"
@@ -1461,15 +1493,27 @@ async def news_repost_task():
     repost_interval = 300 # Збільшено інтервал до 300 секунд (5 хвилин)
     while True:
         try:
-            mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')}"
-            mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство."
-            mock_source_url = "https://example.com/ai-news"
-            mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
-            mock_lang = 'uk'
-
             pool = await get_db_pool()
             async with pool.connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
+                    # Отримуємо всі активні джерела
+                    await cur.execute("SELECT id, name, link, type FROM sources WHERE status = 'active'")
+                    available_sources = await cur.fetchall()
+
+                    selected_source = None
+                    if available_sources:
+                        selected_source = random.choice(available_sources)
+                        mock_source_url = selected_source['link']
+                        mock_source_name = selected_source['name']
+                    else:
+                        mock_source_url = "https://example.com/ai-news"
+                        mock_source_name = "AI News (Default)"
+
+                    mock_title = f"Оновлення новин AI {datetime.now().strftime('%H:%M:%S')} від {mock_source_name}"
+                    mock_content = f"Це автоматично згенерована новина про останні події у світі AI та технологій. AI продовжує інтегруватися в повсякденне життя, змінюючи спосіб взаємодії людей з інформацією. Нові досягнення в машинному навчанні дозволяють створювати більш персоналізовані та адаптивні системи. Експерти прогнозують подальше зростання впливу AI на економіку та суспільство. Джерело: {mock_source_name}."
+                    mock_image_url = "https://placehold.co/600x400/ADE8F4/000000?text=AI+News"
+                    mock_lang = 'uk'
+
                     await cur.execute("SELECT viewed_topics FROM user_stats LIMIT 1")
                     user_stats_rec = await cur.fetchone()
                     user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
@@ -1489,12 +1533,14 @@ async def news_repost_task():
                 if NEWS_CHANNEL_LINK:
                     try:
                         post_text = await ai_formulate_news_post(new_news.title, new_news.ai_summary or new_news.content, new_news.source_url)
-                        # Перевіряємо, чи NEWS_CHANNEL_LINK є дійсним посиланням на канал
-                        # Якщо це посилання на канал, то потрібно витягти username або ID
-                        # Для простоти, припустимо, що NEWS_CHANNEL_LINK - це username каналу (наприклад, @newsone234)
-                        # Або ж це може бути ID каналу (наприклад, -1001234567890)
-                        # Для демонстрації, просто надсилаємо в канал за посиланням
-                        await bot.send_message(chat_id=NEWS_CHANNEL_LINK.replace("https://t.me/", "@"), text=post_text, disable_web_page_preview=False)
+                        
+                        channel_identifier = NEWS_CHANNEL_LINK
+                        if channel_identifier.startswith("https://t.me/"):
+                            channel_identifier = "@" + channel_identifier.split('/')[-1]
+                        elif not channel_identifier.startswith("@"):
+                            channel_identifier = "@" + channel_identifier
+
+                        await bot.send_message(chat_id=channel_identifier, text=post_text, disable_web_page_preview=False)
                         logger.info(f"Новину {new_news.id} опубліковано в канал {NEWS_CHANNEL_LINK}.")
                     except Exception as e:
                         logger.error(f"Помилка публікації новини в канал {NEWS_CHANNEL_LINK}: {e}")
@@ -1615,7 +1661,6 @@ async def telegram_webhook(request: Request):
     try:
         update = await request.json()
         logger.info(f"Отримано оновлення Telegram: {update}")
-        # Забезпечуємо, що dp.feed_update отримує коректний FSMContext
         await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
         logger.info("Успішно оброблено оновлення Telegram.")
     except Exception as e:

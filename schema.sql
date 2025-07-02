@@ -32,7 +32,6 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS view_mode TEXT DEFAULT 'manual';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT; -- Додаємо telegram_id для users.html
 
-
 -- Додавання/оновлення таблиці news, якщо її немає
 CREATE TABLE IF NOT EXISTS news (
     id SERIAL PRIMARY KEY,
@@ -44,11 +43,10 @@ CREATE TABLE IF NOT EXISTS news (
     lang VARCHAR(10) NOT NULL DEFAULT 'uk',
     ai_summary TEXT,
     ai_classified_topics JSONB,
-    moderation_status VARCHAR(50) DEFAULT 'approved', -- 'pending_review', 'approved', 'declined'
+    moderation_status VARCHAR(50) DEFAULT 'approved',
     expires_at TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 days')
 );
-
--- Додавання відсутніх стовпців до таблиці news
+-- Додавання відсутніх стовпців до news
 ALTER TABLE news ADD COLUMN IF NOT EXISTS source_url TEXT;
 ALTER TABLE news ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE news ADD COLUMN IF NOT EXISTS ai_summary TEXT;
@@ -56,16 +54,17 @@ ALTER TABLE news ADD COLUMN IF NOT EXISTS ai_classified_topics JSONB;
 ALTER TABLE news ADD COLUMN IF NOT EXISTS moderation_status VARCHAR(50) DEFAULT 'approved';
 ALTER TABLE news ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (CURRENT_TIMESTAMP + INTERVAL '5 days');
 
+
 -- Додавання/оновлення таблиці sources, якщо її немає
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     link TEXT UNIQUE NOT NULL,
-    type TEXT DEFAULT 'web', -- 'web', 'telegram', 'rss', 'twitter'
-    status TEXT DEFAULT 'active' -- 'active', 'inactive', 'blocked'
+    type TEXT DEFAULT 'web',
+    status TEXT DEFAULT 'active'
 );
 
--- Додавання/оновлення таблиці user_news_views, якщо її немає
+-- Додавання/оновлення таблиці user_news_views
 CREATE TABLE IF NOT EXISTS user_news_views (
     user_id BIGINT NOT NULL REFERENCES users(id),
     news_id INTEGER NOT NULL REFERENCES news(id),
@@ -73,17 +72,14 @@ CREATE TABLE IF NOT EXISTS user_news_views (
     PRIMARY KEY (user_id, news_id)
 );
 
--- Додавання/оновлення таблиці user_stats, якщо її немає
+-- Додавання/оновлення таблиці user_stats
 CREATE TABLE IF NOT EXISTS user_stats (
     user_id BIGINT PRIMARY KEY REFERENCES users(id),
     viewed_news_count INT DEFAULT 0,
     last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігає список тем, які переглядав користувач
+    viewed_topics JSONB DEFAULT '[]'::jsonb
 );
-
--- Додавання відсутніх стовпців до таблиці user_stats
 ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS viewed_topics JSONB DEFAULT '[]'::jsonb;
-
 
 -- Додавання/оновлення таблиці comments
 CREATE TABLE IF NOT EXISTS comments (
@@ -98,13 +94,11 @@ CREATE TABLE IF NOT EXISTS comments (
 CREATE TABLE IF NOT EXISTS reports (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id),
-    report_type TEXT NOT NULL, -- e.g., 'news_fake', 'user_spam', 'source_bias'
-    target_id INT, -- ID новини, користувача, джерела тощо
+    report_type TEXT NOT NULL,
+    target_id INT,
     details JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
--- Додавання відсутніх стовпців до таблиці reports
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS target_id INT;
 
 -- Додавання/оновлення таблиці feedback
@@ -112,7 +106,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id),
     feedback_text TEXT NOT NULL,
-    rating INT, -- 1-5 stars
+    rating INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -121,7 +115,7 @@ CREATE TABLE IF NOT EXISTS summaries (
     id SERIAL PRIMARY KEY,
     news_id INT REFERENCES news(id),
     summary_text TEXT NOT NULL,
-    summary_type TEXT NOT NULL, -- e.g., 'ai_generated', 'human_edited', 'for_child'
+    summary_type TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -129,7 +123,7 @@ CREATE TABLE IF NOT EXISTS summaries (
 CREATE TABLE IF NOT EXISTS blocks (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES users(id),
-    block_type TEXT NOT NULL, -- 'source', 'topic', 'keyword', 'user'
+    block_type TEXT NOT NULL,
     value TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, block_type, value)
@@ -152,8 +146,6 @@ CREATE TABLE IF NOT EXISTS invites (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     accepted_at TIMESTAMP
 );
-
--- Додавання відсутніх стовпців до таблиці invites
 ALTER TABLE invites ADD COLUMN IF NOT EXISTS inviter_id INT REFERENCES users(id);
 
 -- Додавання/оновлення таблиці admin_actions
