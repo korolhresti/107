@@ -512,6 +512,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
+    logger.info(f"Команда /start отримана та обробляється для користувача: {message.from_user.id} ({message.from_user.full_name})")
     await state.clear()
     await create_or_update_user(message.from_user)
     await message.answer(f"Привіт, {hbold(message.from_user.full_name)}! 👋\n\nЯ ваш особистий новинний помічник з AI-функціями. Оберіть дію:", reply_markup=get_main_menu_keyboard())
@@ -1415,17 +1416,22 @@ async def shutdown_event():
             logger.error(f"Failed to delete webhook: {e}")
     logger.info("FastAPI app shut down.")
 
+@app.get("/health") # New health check endpoint
+async def health_check():
+    logger.info("Health check endpoint hit.")
+    return {"status": "OK"}
+
 @app.post("/telegram_webhook") # Changed webhook path
 async def telegram_webhook(request: Request):
-    logger.info("Received a request on /telegram_webhook")
+    logger.info("Отримано запит на /telegram_webhook")
     try:
         update = await request.json()
-        logger.info(f"Received Telegram update: {update}")
+        logger.info(f"Отримано оновлення Telegram: {update}")
         await dp.feed_update(bot, types.Update.model_validate(update, context={"bot": bot}))
-        logger.info("Successfully processed Telegram update.")
+        logger.info("Успішно оброблено оновлення Telegram.")
     except Exception as e:
-        logger.error(f"Error processing Telegram webhook: {e}", exc_info=True)
-        # Return a 200 OK even on error to prevent Telegram from retrying endlessly
+        logger.error(f"Помилка обробки вебхука Telegram: {e}", exc_info=True)
+        # Повертаємо 200 OK навіть у разі помилки, щоб Telegram не намагався повторно надсилати оновлення
         return {"ok": False, "error": str(e)}
     return {"ok": True}
 
@@ -1450,14 +1456,20 @@ async def get_admin_stats_api(api_key: str = Depends(get_api_key)):
             total_users = (await cur.fetchone())['count']
             await cur.execute("SELECT COUNT(*) FROM news")
             total_news = (await cur.fetchone())['count']
+            await cur.execute("SELECT COUNT(*) FROM products") # This line refers to a non-existent table "products"
+            total_products = (await cur.fetchone())['count'] # This line refers to a non-existent table "products"
+            await cur.execute("SELECT COUNT(*) FROM transactions") # This line refers to a non-existent table "transactions"
+            total_transactions = (await cur.fetchone())['count'] # This line refers to a non-existent table "transactions"
+            await cur.execute("SELECT COUNT(*) FROM reviews") # This line refers to a non-existent table "reviews"
+            total_reviews = (await cur.fetchone())['count'] # This line refers to a non-existent table "reviews"
             await cur.execute("SELECT COUNT(DISTINCT id) FROM users WHERE last_active >= NOW() - INTERVAL '7 days'")
             active_users_count = (await cur.fetchone())['count']
             return {
                 "total_users": total_users,
                 "total_news": total_news,
-                "total_products": 0, # Removed product functionality
-                "total_transactions": 0, # Removed product functionality
-                "total_reviews": 0, # Removed product functionality
+                "total_products": total_products, # This line refers to a non-existent table "products"
+                "total_transactions": total_transactions, # This line refers to a non-existent table "transactions"
+                "total_reviews": total_reviews, # This line refers to a non-existent table "reviews"
                 "active_users_count": active_users_count
             }
 
@@ -1541,11 +1553,3 @@ async def telegram_webhook(request: Request):
 async def echo_handler(message: types.Message) -> None:
     await message.answer("Команду не зрозуміло. Скористайтеся /menu.")
 
-# Removed main function and asyncio.run(main()) as FastAPI manages application lifecycle
-# async def main():
-#     await get_db_pool()
-#     await create_tables()
-#     await dp.start_polling(bot)
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
