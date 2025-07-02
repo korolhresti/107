@@ -27,11 +27,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 
-# Імпортуємо нові парсери
-from parsers import web_parser
-from parsers import telegram_parser
-from parsers import rss_parser
-from parsers import social_media_parser
+# Імпортуємо парсери безпосередньо, оскільки вони знаходяться в тій же директорії
+import web_parser
+import telegram_parser
+import rss_parser
+import social_media_parser
 
 load_dotenv()
 
@@ -54,8 +54,7 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-app.mount("/static", StaticFiles(directory="."), name="static")
-
+app.mount("/static", StaticFiles(directory=".")) # Змінено на поточну директорію
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_api_key(api_key: str = Depends(api_key_header)):
