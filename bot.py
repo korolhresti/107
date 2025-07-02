@@ -1374,7 +1374,8 @@ async def process_source_type(callback: CallbackQuery, state: FSMContext):
                     (source_name, source_link, source_type)
                 )
                 new_source_id = (await cur.fetchone())['id']
-                await callback.message.edit_text(f"✅ Джерело '{source_name}' (ID: {new_source_id}) успішно додано! Наразі бот автоматично генерує мок-новини, використовуючи ваші додані джерела для демонстрації. Для повноцінного парсингу потрібна додаткова розробка.")
+                # Повідомлення про успішне додавання
+                await callback.message.edit_text(f"✅ Джерело '{source_name}' (ID: {new_source_id}) успішно додано! Тепер бот може використовувати його для парсингу (або імітації парсингу).")
                 logger.info(f"Нове джерело додано: {source_name} ({source_link}, Type: {source_type})")
             except psycopg.errors.UniqueViolation:
                 await callback.message.edit_text("❌ Це джерело вже існує в базі даних.")
@@ -1405,16 +1406,21 @@ async def parse_source_content(source: Dict[str, Any]) -> Optional[Dict[str, Any
     source_link = source['link']
     
     parsed_data = None
-    if source_type == 'web':
-        parsed_data = await web_parser.parse_website(source_link)
-    elif source_type == 'telegram':
-        parsed_data = await telegram_parser.get_telegram_channel_posts(source_link)
-    elif source_type == 'rss':
-        parsed_data = await rss_parser.parse_rss_feed(source_link)
-    elif source_type in ['twitter', 'instagram']: # Обробляємо обидва типи соцмереж
-        parsed_data = await social_media_parser.get_social_media_posts(source_link, source_type)
-    else:
-        logger.warning(f"Невідомий тип джерела для парсингу: {source_type}")
+    try:
+        if source_type == 'web':
+            parsed_data = await web_parser.parse_website(source_link)
+        elif source_type == 'telegram':
+            parsed_data = await telegram_parser.get_telegram_channel_posts(source_link)
+        elif source_type == 'rss':
+            parsed_data = await rss_parser.parse_rss_feed(source_link)
+        elif source_type in ['twitter', 'instagram']: # Обробляємо обидва типи соцмереж
+            parsed_data = await social_media_parser.get_social_media_posts(source_link, source_type)
+        else:
+            logger.warning(f"Невідомий тип джерела для парсингу: {source_type}")
+            return None # Повертаємо None, якщо тип невідомий
+    except Exception as e:
+        logger.error(f"Помилка при парсингу джерела {source_link} ({source_type}): {e}", exc_info=True)
+        return None
 
     if parsed_data:
         # Додаємо інформацію про джерело до спарсених даних
@@ -1612,7 +1618,9 @@ async def news_repost_task():
 
                     # Крок 3.3: Персоналізована Фільтрація (імітація)
                     # Отримуємо інтереси користувачів для імітації фільтрації
-                    await cur.execute("SELECT viewed_topics FROM user_stats LIMIT 1") # Беремо інтереси одного користувача для прикладу
+                    # Примітка: Це бере інтереси лише одного користувача. Для реальної системи
+                    # потрібно було б перебирати всіх користувачів з автосповіщеннями.
+                    await cur.execute("SELECT viewed_topics FROM user_stats LIMIT 1")
                     user_stats_rec = await cur.fetchone()
                     user_interests = user_stats_rec['viewed_topics'] if user_stats_rec else []
 
@@ -1647,7 +1655,7 @@ async def news_repost_task():
                     else:
                         logger.info(f"Пропущено репост новини (нецікаво): '{mock_title}'")
         except Exception as e:
-            logger.error(f"Помилка в завданні репосту новин: {e}")
+            logger.error(f"Помилка в завданні репосту новин: {e}", exc_info=True) # Додано exc_info=True для повного traceback
         await asyncio.sleep(repost_interval)
 
 async def news_digest_task():
@@ -1713,9 +1721,11 @@ async def news_digest_task():
                                 logger.info(f"Дайджест надіслано користувачу {user_id}.")
                             except Exception as e:
                                 logger.error(f"Не вдалося надіслати дайджест користувачу {user_id}: {e}")
+                        else:
+                            logger.info(f"Немає нових новин для дайджесту для користувача {user_id}.")
         except Exception as e:
-            logger.error(f"Помилка в завданні дайджесту новин: {e}")
-
+            logger.error(f"Помилка в завданні дайджесту новин: {e}", exc_info=True) # Додано exc_info=True
+            
 @app.on_event("startup")
 async def startup_event():
     await get_db_pool()
@@ -1860,7 +1870,7 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("DELETE FROM news WHERE id = %s", (news_id,))
+            await cur.execute("DELETE FROM news WHERE id = %s", (news_id,))\
             if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Новину не знайдено.")
             return
 
