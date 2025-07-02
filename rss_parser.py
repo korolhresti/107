@@ -1,66 +1,83 @@
-import feedparser
+import requests
+from bs4 import BeautifulSoup
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 import asyncio
 
 async def parse_rss_feed(url: str) -> Optional[Dict[str, Any]]:
     """
-    Парсить RSS-стрічку за допомогою feedparser.
+    Парсить RSS-стрічку за допомогою requests та BeautifulSoup.
     Повертає дані останньої новини.
     """
     print(f"Парсинг RSS-стрічки: {url}")
     try:
-        # feedparser не є асинхронним, тому запускаємо його в окремому потоці
-        # для уникнення блокування циклу подій.
-        feed = await asyncio.to_thread(feedparser.parse, url)
+        # requests є синхронною бібліотекою, тому запускаємо її в окремому потоці
+        # для уникнення блокування циклу подій asyncio.
+        response = await asyncio.to_thread(requests.get, url, timeout=10)
+        response.raise_for_status() # Виклик винятку для поганих відповідей (4xx або 5xx)
 
-        if feed.entries:
-            latest_entry = feed.entries[0]
+        soup = BeautifulSoup(response.content, 'xml') # Парсимо як XML
 
-            title = latest_entry.get('title', 'Без заголовка')
-            content = latest_entry.get('summary', latest_entry.get('description', 'Без змісту'))
+        latest_entry = soup.find('item') # Для RSS 2.0
+        if not latest_entry:
+            latest_entry = soup.find('entry') # Для Atom feeds
+
+        if latest_entry:
+            title_tag = latest_entry.find('title')
+            title = title_tag.get_text() if title_tag else 'Без заголовка'
+
+            content_tag = latest_entry.find('description') or latest_entry.find('summary') or latest_entry.find('content')
+            content = content_tag.get_text() if content_tag else 'Без змісту'
+
+            link_tag = latest_entry.find('link')
+            link = link_tag.get_text() if link_tag else url
+            if link_tag and link_tag.has_attr('href'): # Для Atom feeds
+                link = link_tag['href']
 
             # Спроба отримати дату публікації
             published_at = datetime.now(timezone.utc) # За замовчуванням
-            if hasattr(latest_entry, 'published_parsed'):
+            pub_date_tag = latest_entry.find('pubDate') or latest_entry.find('updated')
+            if pub_date_tag:
                 try:
-                    published_at = datetime(*latest_entry.published_parsed[:6], tzinfo=timezone.utc)
-                except Exception:
+                    # BeautifulSoup повертає рядок, який потрібно розпарсити
+                    # Це може бути складно, тому краще покладатися на загальний формат ISO
+                    # або використовувати більш надійні бібліотеки для парсингу дат.
+                    # Для простоти, спробуємо стандартний парсинг.
+                    published_at = datetime.fromisoformat(pub_date_tag.get_text().replace('Z', '+00:00'))
+                except ValueError:
                     pass # Використовуємо datetime.now(), якщо парсинг дати невдалий
 
             image_url = None
-            if hasattr(latest_entry, 'media_thumbnail') and latest_entry.media_thumbnail:
-                image_url = latest_entry.media_thumbnail[0]['url']
-            elif hasattr(latest_entry, 'enclosures') and latest_entry.enclosures:
-                for enc in latest_entry.enclosures:
-                    if enc.get('type', '').startswith('image/'):
-                        image_url = enc['href']
-                        break
-            elif hasattr(latest_entry, 'links'):
-                for link in latest_entry.links:
-                    if link.get('rel') == 'enclosure' and link.get('type', '').startswith('image/'):
-                        image_url = link['href']
-                        break
+            # Спроба знайти зображення в тегах media:thumbnail або enclosure
+            media_thumbnail = latest_entry.find('media:thumbnail')
+            if media_thumbnail and media_thumbnail.has_attr('url'):
+                image_url = media_thumbnail['url']
+            else:
+                enclosure = latest_entry.find('enclosure', type=lambda x: x and x.startswith('image/'))
+                if enclosure and enclosure.has_attr('url'):
+                    image_url = enclosure['url']
             
             # Якщо image_url все ще немає, спробуємо знайти в content за допомогою BeautifulSoup
             if not image_url and content:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(content, 'html.parser')
-                img_tag = soup.find('img')
+                content_soup = BeautifulSoup(content, 'html.parser')
+                img_tag = content_soup.find('img')
                 if img_tag and img_tag.get('src'):
                     image_url = img_tag['src']
 
             return {
                 "title": title,
                 "content": content,
-                "source_url": latest_entry.get('link', url),
+                "source_url": link,
                 "image_url": image_url,
                 "published_at": published_at,
-                "lang": latest_entry.get('language', 'uk') # Можна спробувати визначити мову
+                "lang": "uk" # Можна спробувати визначити мову за допомогою бібліотеки
             }
         else:
-            print(f"RSS-стрічка {url} не містить записів.")
+            print(f"RSS-стрічка {url} не містить записів або має невідомий формат.")
             return None
+    except requests.exceptions.RequestException as e:
+        print(f"Помилка HTTP запиту до RSS-стрічки {url}: {e}")
+        return None
     except Exception as e:
         print(f"Помилка при парсингу RSS-стрічки {url}: {e}")
         return None
@@ -68,9 +85,10 @@ async def parse_rss_feed(url: str) -> Optional[Dict[str, Any]]:
 # Для тестування (якщо потрібно запускати окремо)
 if __name__ == "__main__":
     async def test_parser():
-        print("Тестування rss_parser...")
+        print("Тестування rss_parser (без feedparser)...")
         # Приклад використання: замініть на реальне посилання на RSS-стрічку
-        test_rss_url = "http://rss.cnn.com/rss/cnn_topstories.rss" # Приклад
+        test_rss_url = "http://rss.cnn.com/rss/cnn_topstories.rss" # Приклад RSS 2.0
+        # test_rss_url = "https://www.theverge.com/rss/index.xml" # Приклад Atom feed
         data = await parse_rss_feed(test_rss_url)
         if data:
             print(f"Заголовок: {data.get('title')}")
