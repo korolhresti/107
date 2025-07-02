@@ -8,8 +8,9 @@ echo "Застосування схеми до бази даних..."
 # Це також додасть відсутні стовпці до існуючих таблиць.
 psql $DATABASE_URL -f schema.sql -X
 
-# Додаємо поточну директорію до PYTHONPATH, щоб Python міг знайти пакет 'parsers'
-export PYTHONPATH=$PYTHONPATH:$(pwd)
+# Change directory to the application source directory
+# This assumes your bot.py and parsers directory are directly inside 'src'
+cd src
 
 echo "Запуск веб-сервера Uvicorn..."
 # Запускаємо веб-сервер на порту, який надає Render (зазвичай 10000)
