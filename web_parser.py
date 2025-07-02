@@ -40,6 +40,10 @@ async def parse_website(url: str) -> Optional[Dict[str, Any]]:
             "lang": "uk" # Можна спробувати визначити мову за допомогою бібліотеки
         }
     except httpx.RequestError as e:
+        # Спеціальна обробка для 403 Forbidden
+        if "403 Forbidden" in str(e):
+            print(f"Помилка HTTP запиту: {e}. Доступ до сайту {url} заборонено. Пропускаю.")
+            return None
         print(f"Помилка HTTP запиту: {e}")
         return None
     except Exception as e:

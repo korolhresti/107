@@ -1,17 +1,35 @@
 -- patch_schema.sql - Скрипт для оновлення існуючої схеми бази даних, якщо schema.sql не був виконаний повністю.
 
--- Додавання/оновлення таблиці custom_feeds, якщо її немає або потрібно оновити
-CREATE TABLE IF NOT EXISTS custom_feeds (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    feed_name TEXT NOT NULL,
-    filters JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (user_id, feed_name)
+-- Додавання/оновлення таблиці users
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY, -- Змінено з SERIAL на BIGSERIAL для підтримки великих ID Telegram
+    telegram_id BIGINT UNIQUE, -- Залишається BIGINT
+    username VARCHAR(255),
+    first_name VARCHAR(255),
+    last_name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_admin BOOLEAN DEFAULT FALSE,
+    last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    language VARCHAR(10) DEFAULT 'uk',
+    auto_notifications BOOLEAN DEFAULT FALSE,
+    digest_frequency VARCHAR(50) DEFAULT 'daily',
+    safe_mode BOOLEAN DEFAULT FALSE,
+    current_feed_id INT,
+    is_premium BOOLEAN DEFAULT FALSE,
+    premium_expires_at TIMESTAMP WITH TIME ZONE,
+    level INT DEFAULT 1,
+    badges JSONB DEFAULT '[]'::JSONB,
+    inviter_id BIGINT,
+    email VARCHAR(255) UNIQUE,
+    view_mode VARCHAR(50) DEFAULT 'detailed'
 );
 
 -- Додавання відсутніх стовпців до таблиці users
 -- (Якщо ці стовпці вже існують, ALTER TABLE ADD COLUMN IF NOT EXISTS просто пропустить їх)
+-- Ці ALTER TABLE команди були перенесені сюди з попередньої версії schema.sql
+-- і тепер вони будуть виконуватися після CREATE TABLE IF NOT EXISTS users
+-- Це забезпечить, що стовпці будуть додані, якщо таблиця існувала, але не мала цих стовпців.
+-- Якщо таблиця створюється вперше з BIGSERIAL, ці ALTER TABLE будуть пропущені.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(255);
@@ -22,15 +40,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR(10) DEFAULT 'uk';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_notifications BOOLEAN DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(50) DEFAULT 'daily';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS safe_mode BOOLEAN DEFAULT FALSE;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS current_feed_id INT; -- Можливо, потрібно буде змінити на BIGINT, якщо це посилання на великий ID
+ALTER TABLE users ADD COLUMN IF NOT EXISTS current_feed_id INT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_expires_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS level INT DEFAULT 1;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS badges JSONB DEFAULT '[]'::JSONB;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS inviter_id BIGINT; -- Змінено на BIGINT
+ALTER TABLE users ADD COLUMN IF NOT EXISTS inviter_id BIGINT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS view_mode VARCHAR(50) DEFAULT 'detailed';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT UNIQUE; -- Змінено на BIGINT
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT UNIQUE;
+
+
+-- Додавання/оновлення таблиці custom_feeds, якщо її немає або потрібно оновити
+CREATE TABLE IF NOT EXISTS custom_feeds (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
+    feed_name TEXT NOT NULL,
+    filters JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, feed_name)
+);
 
 -- Додавання/оновлення таблиці news
 CREATE TABLE IF NOT EXISTS news (
@@ -174,7 +203,6 @@ CREATE TABLE IF NOT EXISTS source_stats (
 
 -- Створення або перестворення індексів. IF NOT EXISTS тут особливо корисний.
 CREATE INDEX IF NOT EXISTS idx_news_published_expires_moderation ON news (published_at DESC, expires_at, moderation_status);
--- CREATE INDEX IF NOT EXISTS idx_filters_user_id ON filters (user_id); -- filters table not defined
 CREATE INDEX IF NOT EXISTS idx_blocks_user_type_value ON blocks (user_id, block_type, value);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_stats_user_id ON user_stats (user_id);
