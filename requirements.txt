@@ -7,7 +7,9 @@ aiohttp==3.9.5
 psycopg-pool==3.2.1
 gtts==2.5.1
 croniter==2.0.7
-beautifulsoup4==4.12.3 # Переконайтеся, що ця залежність встановлюється
+beautifulsoup4==4.12.3
 feedparser==6.0.10
 requests==2.32.3
 lxml==5.2.2
+html5lib==1.1 # Додано для сумісності з feedparser
+charade==4.0.0 # Додано для сумісності з feedparser

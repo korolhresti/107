@@ -1,34 +1,34 @@
-import logging
+import asyncio
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 
-logger = logging.getLogger(__name__)
-
-async def get_telegram_channel_posts(channel_link: str, limit: int = 1) -> Optional[Dict[str, Any]]:
+async def get_telegram_channel_posts(channel_link: str) -> Optional[Dict[str, Any]]:
     """
-    Імітує отримання останніх постів з Telegram-каналу.
-    У реальній системі це вимагатиме використання Telegram API (наприклад, Telethon userbot)
-    або спеціальних дозволів для бота.
-    Для демонстрації повертає мок-дані.
+    Імітує отримання постів з Telegram-каналу.
+    У реальному застосуванні тут потрібна інтеграція з Telegram Bot API
+    або іншими інструментами для доступу до публічних каналів.
     """
-    logger.info(f"SIMULATED PARSING: Отримання постів з Telegram-каналу: {channel_link}")
-    
-    # Мок-дані, які імітують останній пост
-    mock_title = f"Оновлення з Telegram-каналу {channel_link.split('/')[-1]} на {datetime.now().strftime('%H:%M')}"
-    mock_content = (
-        f"Сьогодні канал {channel_link.split('/')[-1]} опублікував важливу новину про останні події. "
-        "У дописі йдеться про нові тенденції у сфері штучного інтелекту та їхній вплив на повсякденне життя. "
-        "Експерти зазначають, що швидкість впровадження AI-технологій значно зростає, "
-        "і це відкриває нові можливості для розвитку різних галузей. "
-        "Детальніше читайте у повному дописі."
-    )
-    mock_image_url = "https://placehold.co/600x400/80B3FF/FFFFFF?text=Telegram+News"
-
+    print(f"Імітація парсингу Telegram-каналу: {channel_link}")
+    # Це лише заглушка. Реальна логіка потребуватиме авторизації та обробки API Telegram.
     return {
-        "title": mock_title,
-        "content": mock_content,
-        "image_url": mock_image_url,
+        "title": f"Останній пост з Telegram каналу {channel_link.split('/')[-1]}",
+        "content": "Це імітований вміст Telegram-посту. Для реального парсингу потрібна інтеграція з Telegram API.",
         "source_url": channel_link,
+        "image_url": "https://placehold.co/600x400/87CEEB/FFFFFF?text=Telegram",
+        "published_at": datetime.now(),
         "lang": "uk"
     }
 
+# Для тестування (якщо потрібно запускати окремо)
+if __name__ == "__main__":
+    async def test_parser():
+        print("Тестування telegram_parser...")
+        test_channel_link = "https://t.me/some_telegram_channel"
+        data = await get_telegram_channel_posts(test_channel_link)
+        if data:
+            print(f"Заголовок: {data.get('title')}")
+            print(f"Зміст: {data.get('content')}")
+        else:
+            print(f"Не вдалося спарсити {test_channel_link}")
+
+    asyncio.run(test_parser())
