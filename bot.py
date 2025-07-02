@@ -171,7 +171,7 @@ async def create_tables():
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(id),
                 feed_name TEXT NOT NULL,
-                filters JSONB, -- Зберігає JSON об'єкт з фільтрами (наприклад, {"source_ids": [1, 2, 3]})
+                filters JSONB, -- Stores JSON object with filters (e.g., {"source_ids": [1, 2, 3]})
                 UNIQUE (user_id, feed_name)
             );
         """)
@@ -197,7 +197,7 @@ async def create_tables():
                 user_id BIGINT PRIMARY KEY REFERENCES users(id),
                 viewed_news_count INT DEFAULT 0,
                 last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                viewed_topics JSONB DEFAULT '[]'::jsonb -- Зберігає список тем, які переглядав користувач
+                viewed_topics JSONB DEFAULT '[]'::jsonb -- Stores a list of topics the user has viewed
             );
         """)
         logger.info("Таблиці перевірено/створено.")
@@ -221,14 +221,20 @@ async def create_or_update_user(tg_user: Any) -> User:
                 return user
             else:
                 is_admin = tg_user.id in ADMIN_IDS
+                # Ensure that username, first_name, last_name are not None before passing to DB
+                username = tg_user.username if hasattr(tg_user, 'username') else None
+                first_name = tg_user.first_name if hasattr(tg_user, 'first_name') else None
+                last_name = tg_user.last_name if hasattr(tg_user, 'last_name') else None
+                language_code = tg_user.language_code if hasattr(tg_user, 'language_code') else 'uk'
+
                 await cur.execute(
                     """INSERT INTO users (id, username, first_name, last_name, is_admin, created_at, last_active, language)
                     VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)""",
-                    (tg_user.id, tg_user.username, tg_user.first_name, tg_user.last_name, is_admin, tg_user.language_code)
+                    (tg_user.id, username, first_name, last_name, is_admin, language_code)
                 )
                 await cur.execute("INSERT INTO user_stats (user_id, last_active) VALUES (%s, CURRENT_TIMESTAMP)", (tg_user.id,))
-                new_user = User(id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name,
-                                last_name=tg_user.last_name, is_admin=is_admin, language=tg_user.language_code)
+                new_user = User(id=tg_user.id, username=username, first_name=first_name,
+                                last_name=last_name, is_admin=is_admin, language=language_code)
                 logger.info(f"Новий користувач: {new_user.username or new_user.first_name} (ID: {new_user.id})")
                 return new_user
 
@@ -494,19 +500,20 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
                 f"<i>Опубліковано: {news_obj.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n"
                 f"<i>Новина {current_index + 1} з {total_count}</i>"
             )
-            if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
             
+            # Додаємо посилання на джерело та зображення безпосередньо в текст
+            if news_obj.source_url: message_text += f"\n\n🔗 {hlink('Читати джерело', news_obj.source_url)}"
+            if news_obj.image_url: message_text += f"\n\n[Зображення новини]({news_obj.image_url})" # Додаємо зображення як клікабельне посилання в тексті
+
             reply_markup = get_news_keyboard(news_obj.id)
             
-            if news_obj.image_url:
-                try: msg = await bot.send_photo(chat_id, photo=news_obj.image_url, caption=message_text, reply_markup=reply_markup, disable_notification=True)
-                except Exception as e:
-                    logger.warning(f"Не вдалося надіслати фото для новини {news_id}: {e}. Надсилаю без фото.")
-                    msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
-            else:
-                msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=True)
+            # Завжди використовуємо send_message і дозволяємо попередній перегляд веб-сторінки
+            msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup, disable_web_page_preview=False)
             
-            await dp.fsm.get_context(chat_id, chat_id).update_data(last_message_id=msg.message_id)
+            # Правильний спосіб отримати контекст FSM за межами обробника
+            state_context = FSMContext(bot=bot, storage=dp.storage, user_id=chat_id, chat_id=chat_id)
+            await state_context.update_data(last_message_id=msg.message_id)
+            
             await mark_news_as_viewed(chat_id, news_id)
             if news_obj.ai_classified_topics: await update_user_viewed_topics(chat_id, news_obj.ai_classified_topics)
 
