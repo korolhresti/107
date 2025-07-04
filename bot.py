@@ -698,32 +698,25 @@ async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("ai_news_functions_menu"))
 async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMContext):
     logger.info(f"Отримано callback 'ai_news_functions_menu' від користувача {callback.from_user.id}")
-    # Отримуємо news_id з callback_data.
-    # Формат: ai_news_functions_menu_{news_id}
-    parts = callback.data.split('_')
-    # Перевіряємо, чи достатньо частин і чи остання частина є числом (news_id)
-    if len(parts) >= 4 and parts[3].isdigit(): # Corrected index for news_id
-        news_id = int(parts[3]) # news_id is now at index 3
-    else:
-        news_id = None
+    logger.debug(f"Callback data for AI functions menu: {callback.data}") # Додано логування
     
-    if not news_id: # Якщо викликано не з новини, спробуємо взяти з FSM
-        user_data = await state.get_data()
-        news_id = user_data.get("current_news_id_for_ai_menu") # Припустимо, що ми зберігаємо ID новини для AI меню
-
+    # Очікуваний формат: ai_news_functions_menu_{news_id}
+    parts = callback.data.split('_')
+    news_id = None
+    # Перевіряємо, чи достатньо частин і чи остання частина є числом (news_id)
+    if len(parts) > 3 and parts[3].isdigit(): # news_id має бути четвертим елементом (індекс 3)
+        news_id = int(parts[3])
+    
     if not news_id:
-        logger.warning(f"Не знайдено news_id для AI функцій для користувача {callback.from_user.id}")
+        logger.warning(f"Не знайдено news_id для AI функцій для користувача {callback.from_user.id}. Callback data: {callback.data}")
         await callback.answer("Будь ласка, спочатку оберіть новину.", show_alert=True)
         return
 
     # Зберігаємо news_id для подальших AI-операцій
     await state.update_data(current_news_id_for_ai_menu=news_id)
     
-    # Визначаємо поточну сторінку AI функцій
-    page = 0
-    # The page number is expected to be in the format ai_functions_page_{page_num}_{news_id}
-    # So for ai_news_functions_menu_{news_id}, page is always 0 initially.
-    # The 'ai_functions_page_' handler will manage pagination.
+    # Завжди починаємо з першої сторінки AI функцій при першому відкритті меню
+    page = 0 
 
     await callback.message.edit_text("Оберіть AI-функцію:", reply_markup=get_ai_news_functions_keyboard(news_id, page))
     await callback.answer()
@@ -732,6 +725,9 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("ai_functions_page_"))
 async def handle_ai_functions_pagination(callback: CallbackQuery, state: FSMContext):
     logger.info(f"Отримано callback 'ai_functions_page_' від користувача {callback.from_user.id}")
+    logger.debug(f"Callback data for AI functions pagination: {callback.data}") # Додано логування
+    
+    # Очікуваний формат: ai_functions_page_{page}_{news_id}
     parts = callback.data.split('_')
     page = int(parts[3]) # Page number is at index 3
     news_id = int(parts[4]) # News ID is at index 4
