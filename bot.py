@@ -140,6 +140,17 @@ class User(BaseModel):
     email: Optional[str] = None
     view_mode: Optional[str] = 'detailed'
 
+class Source(BaseModel):
+    id: Optional[int] = None
+    user_id: Optional[int] = None
+    source_name: str
+    source_url: HttpUrl
+    source_type: str
+    status: str = 'active'
+    added_at: Optional[datetime] = None
+    last_parsed: Optional[datetime] = None
+    parse_frequency: str = 'hourly'
+
 
 # Функції для взаємодії з БД
 async def create_or_update_user(user_data: types.User):
@@ -1112,18 +1123,17 @@ async def fetch_and_post_news_task():
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Змінено: використовуємо status = 'active'
             await cur.execute("SELECT * FROM sources WHERE status = 'active'")
             sources = await cur.fetchall()
 
     for source in sources:
+        # Покращена перевірка на наявність та не-None значення ключів
+        if not source.get('source_type') or not source.get('source_url') or not source.get('source_name'):
+            logger.warning(f"Джерело з ID {source.get('id', 'N/A')} має відсутні або порожні значення для source_type, source_url або source_name. Пропускаю.")
+            continue
+
         news_data = None
         try:
-            # Додано перевірку на існування ключів перед доступом
-            if 'source_type' not in source or 'source_url' not in source or 'source_name' not in source:
-                logger.error(f"Джерело з ID {source.get('id', 'N/A')} не має необхідних ключів (source_type, source_url, source_name). Пропускаю.")
-                continue
-
             if source['source_type'] == 'rss':
                 news_data = await rss_parser.parse_rss_feed(source['source_url'])
             elif source['source_type'] == 'web':
@@ -1288,6 +1298,18 @@ async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, off
             await cur.execute(query, tuple(params))
             reports = await cur.fetchall()
             return reports
+
+@app.get("/api/admin/sources")
+async def get_admin_sources(api_key: str = Depends(get_api_key), limit: int = 100, offset: int = 0):
+    """
+    Отримує список усіх джерел з бази даних.
+    """
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT * FROM sources ORDER BY added_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            sources = await cur.fetchall()
+            return [Source(**s) for s in sources]
 
 
 @app.get("/api/admin/stats")
