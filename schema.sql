@@ -26,10 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Додавання відсутніх стовпців до таблиці users
 -- (Якщо ці стовпці вже існують, ALTER TABLE ADD COLUMN IF NOT EXISTS просто пропустить їх)
--- Ці ALTER TABLE команди були перенесені сюди з попередньої версії schema.sql
--- і тепер вони будуть виконуватися після CREATE TABLE IF NOT EXISTS users
--- Це забезпечить, що стовпці будуть додані, якщо таблиця існувала, але не мала цих стовпців.
--- Якщо таблиця створюється вперше з BIGSERIAL, ці ALTER TABLE будуть пропущені.
+-- Ці ALTER TABLE команди були перенесені сюди з попередньої...
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(255);
@@ -48,8 +45,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS badges JSONB DEFAULT '[]'::JSONB;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS inviter_id BIGINT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS view_mode VARCHAR(50) DEFAULT 'detailed';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT UNIQUE;
-
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id BIGINT UNIQUE; -- Переконайтеся, що telegram_id існує і унікальний
 
 -- Додавання/оновлення таблиці custom_feeds, якщо її немає або потрібно оновити
 CREATE TABLE IF NOT EXISTS custom_feeds (
@@ -66,56 +62,69 @@ CREATE TABLE IF NOT EXISTS news (
     id SERIAL PRIMARY KEY,
     source_id INT REFERENCES sources(id),
     title TEXT NOT NULL,
-    content TEXT NOT NULL,
+    content TEXT,
     source_url TEXT UNIQUE NOT NULL,
     image_url TEXT,
+    published_at TIMESTAMP WITH TIME ZONE NOT NULL,
     ai_summary TEXT,
     ai_classified_topics JSONB,
-    published_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    moderation_status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    expires_at TIMESTAMP WITH TIME ZONE
+    moderation_status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
+    expires_at TIMESTAMP WITH TIME ZONE, -- Дата та час, коли новина має бути видалена
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Додавання/оновлення таблиці sources
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    source_name VARCHAR(255) NOT NULL,
+    user_id BIGINT REFERENCES users(id), -- Може бути NULL, якщо джерело додано адміністратором або автоматично
+    source_name TEXT NOT NULL,
     source_url TEXT UNIQUE NOT NULL,
-    source_type VARCHAR(50) NOT NULL, -- 'rss', 'web', 'telegram', 'social_media'
-    status VARCHAR(50) DEFAULT 'active', -- 'active', 'inactive', 'blocked'
+    source_type VARCHAR(50) NOT NULL, -- web, rss, telegram, social_media
+    status VARCHAR(50) DEFAULT 'active', -- active, inactive, blocked
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_parsed TIMESTAMP,
-    parse_frequency INTERVAL DEFAULT '1 hour'
+    parse_frequency VARCHAR(50) DEFAULT 'hourly' -- hourly, daily, weekly
 );
+
+-- **ВАЖЛИВО: Додавання відсутніх стовпців до таблиці sources, якщо вони були відсутні в старій схемі**
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS source_type VARCHAR(50);
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS last_parsed TIMESTAMP;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS parse_frequency VARCHAR(50) DEFAULT 'hourly';
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id); -- Додаємо, якщо не існує
+
+-- Додавання унікального обмеження, якщо воно ще не існує
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sources_source_url_key' AND conrelid = 'sources'::regclass) THEN
+        ALTER TABLE sources ADD CONSTRAINT sources_source_url_key UNIQUE (source_url);
+    END IF;
+END $$;
+
 
 -- Додавання/оновлення таблиці user_news_views
 CREATE TABLE IF NOT EXISTS user_news_views (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
+    user_id BIGINT REFERENCES users(id),
     news_id INT REFERENCES news(id),
     viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (user_id, news_id)
+    PRIMARY KEY (user_id, news_id)
 );
 
 -- Додавання/оновлення таблиці user_stats
 CREATE TABLE IF NOT EXISTS user_stats (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id) UNIQUE, -- Змінено на BIGINT
+    user_id BIGINT REFERENCES users(id) UNIQUE,
     news_read_count INT DEFAULT 0,
-    comments_count INT DEFAULT 0,
-    reports_count INT DEFAULT 0,
-    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    viewed_topics JSONB DEFAULT '[]'::JSONB,
-    favorite_sources JSONB DEFAULT '[]'::JSONB
+    ai_requests_count INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Додавання/оновлення таблиці comments
 CREATE TABLE IF NOT EXISTS comments (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
     news_id INT REFERENCES news(id),
-    parent_comment_id INT REFERENCES comments(id),
+    user_id BIGINT REFERENCES users(id),
     comment_text TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     moderation_status VARCHAR(50) DEFAULT 'pending'
@@ -124,38 +133,38 @@ CREATE TABLE IF NOT EXISTS comments (
 -- Додавання/оновлення таблиці reports
 CREATE TABLE IF NOT EXISTS reports (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    target_type VARCHAR(50) NOT NULL, -- 'news', 'comment', 'user', 'source'
-    target_id BIGINT NOT NULL, -- Змінено на BIGINT, оскільки може бути ID користувача або новини
+    user_id BIGINT REFERENCES users(id),
+    target_type VARCHAR(50) NOT NULL, -- 'news', 'comment', 'user'
+    target_id BIGINT NOT NULL, -- Змінено на BIGINT, може бути ID новини, користувача, тощо
     reason TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'pending' -- 'pending', 'resolved', 'rejected'
+    status VARCHAR(50) DEFAULT 'pending' -- pending, reviewed, resolved, rejected
 );
 
 -- Додавання/оновлення таблиці feedback
 CREATE TABLE IF NOT EXISTS feedback (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
+    user_id BIGINT REFERENCES users(id),
     feedback_text TEXT NOT NULL,
-    rating INT, -- 1-5
+    rating INT, -- наприклад, від 1 до 5
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'new' -- 'new', 'reviewed', 'resolved'
+    status VARCHAR(50) DEFAULT 'new'
 );
 
 -- Додавання/оновлення таблиці summaries
 CREATE TABLE IF NOT EXISTS summaries (
     id SERIAL PRIMARY KEY,
-    news_id INT REFERENCES news(id) UNIQUE,
+    news_id INT REFERENCES news(id),
     summary_text TEXT NOT NULL,
-    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    model_used VARCHAR(100)
+    summary_type VARCHAR(50) NOT NULL, -- 'ai', 'manual'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Додавання/оновлення таблиці blocks
 CREATE TABLE IF NOT EXISTS blocks (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    block_type VARCHAR(50) NOT NULL, -- 'source', 'topic', 'keyword', 'user'
+    user_id BIGINT REFERENCES users(id),
+    block_type VARCHAR(50) NOT NULL, -- 'keyword', 'source', 'user'
     value TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, block_type, value)
@@ -164,28 +173,27 @@ CREATE TABLE IF NOT EXISTS blocks (
 -- Додавання/оновлення таблиці bookmarks
 CREATE TABLE IF NOT EXISTS bookmarks (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
+    user_id BIGINT REFERENCES users(id),
     news_id INT REFERENCES news(id),
-    bookmarked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, news_id)
 );
 
 -- Додавання/оновлення таблиці invites
 CREATE TABLE IF NOT EXISTS invites (
     id SERIAL PRIMARY KEY,
-    inviter_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    invite_code VARCHAR(50) UNIQUE NOT NULL,
+    inviter_id BIGINT REFERENCES users(id),
+    invite_code VARCHAR(255) UNIQUE NOT NULL,
+    uses_remaining INT DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP WITH TIME ZONE,
-    used_by_user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    used_at TIMESTAMP WITH TIME ZONE
+    expires_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Додавання/оновлення таблиці admin_actions
 CREATE TABLE IF NOT EXISTS admin_actions (
     id SERIAL PRIMARY KEY,
-    admin_user_id BIGINT REFERENCES users(id), -- Змінено на BIGINT
-    action_type VARCHAR(100) NOT NULL, -- e.g., 'moderate_news', 'block_user', 'change_user_role'
+    admin_user_id BIGINT REFERENCES users(id),
+    action_type VARCHAR(50) NOT NULL, -- 'block_user', 'moderate_news', 'add_source', etc.
     target_id BIGINT, -- Змінено на BIGINT, може бути ID новини, користувача, тощо
     details JSONB,
     action_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
