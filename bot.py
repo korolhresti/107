@@ -223,6 +223,8 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 source_id = source_record['id']
             else:
                 # Якщо джерела немає, додаємо його
+                # user_id тут може бути None, якщо новина додається автоматично планувальником
+                user_id_for_source = news_data.get('user_id_for_source') # Додаємо це поле в news_data при парсингу
                 await cur.execute(
                     """
                     INSERT INTO sources (user_id, source_name, source_url, source_type, added_at)
@@ -230,11 +232,11 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                     ON CONFLICT (source_url) DO UPDATE SET
                         source_name = EXCLUDED.source_name,
                         source_type = EXCLUDED.source_type,
-                        status = 'active',
-                        last_parsed = NULL
+                        status = 'active', -- Активація, якщо було неактивним
+                        last_parsed = NULL -- Скинути, щоб перепарсити
                     RETURNING id;
                     """,
-                    (news_data.get('source_name', 'Невідоме джерело'), str(news_data['source_url']), news_data.get('source_type', 'web'))
+                    (user_id_for_source, news_data.get('source_name', 'Невідоме джерело'), str(news_data['source_url']), news_data.get('source_type', 'web'))
                 )
                 source_id = await cur.fetchone()['id']
                 logger.info(f"Нове джерело додано: {news_data['source_url']}")
@@ -280,6 +282,8 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0) -> L
             query = """
             SELECT * FROM news
             WHERE id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = %s)
+            AND moderation_status = 'approved' -- Тільки схвалені новини
+            AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) -- Не прострочені
             ORDER BY published_at DESC
             LIMIT %s OFFSET %s;
             """
@@ -342,6 +346,10 @@ class AIAssistant(StatesGroup):
     what_if_news_id = State()
     waiting_for_youtube_interview_url = State()
 
+# Додано новий стан для грошового аналізу
+class MonetaryImpactAnalysis(StatesGroup):
+    waiting_for_monetary_impact_news_id = State()
+
 class ReportFakeNews(StatesGroup):
     waiting_for_report_details = State()
     news_id_to_report = State()
@@ -360,7 +368,6 @@ def get_main_menu_keyboard():
         InlineKeyboardButton(text="➕ Додати джерело", callback_data="add_source")
     )
     builder.row(
-        InlineKeyboardButton(text="🧠 AI-функції (Новини)", callback_data="ai_news_functions_menu"),
         InlineKeyboardButton(text="⚙️ Налаштування", callback_data="settings_menu")
     )
     builder.row(
@@ -373,42 +380,56 @@ def get_main_menu_keyboard():
     )
     return builder.as_markup()
 
-def get_ai_news_functions_keyboard(news_id: int):
+def get_ai_news_functions_keyboard(news_id: int, page: int = 0):
     builder = InlineKeyboardBuilder()
+    
+    # Кнопки AI функцій (розбиті на сторінки)
+    # Сторінка 0: Базові функції
+    if page == 0:
+        builder.row(
+            InlineKeyboardButton(text="📝 AI-резюме", callback_data=f"ai_summary_{news_id}"),
+            InlineKeyboardButton(text="🌐 Перекласти", callback_data=f"translate_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="❓ Запитати AI", callback_data=f"ask_news_ai_{news_id}"),
+            InlineKeyboardButton(text="🧑‍🤝‍🧑 Ключові сутності", callback_data=f"extract_entities_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="❓ Пояснити термін", callback_data=f"explain_term_{news_id}"),
+            InlineKeyboardButton(text="🏷️ Класифікувати за темами", callback_data=f"classify_topics_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="➡️ Далі (AI функції)", callback_data=f"ai_functions_page_1_{news_id}")
+        )
+    # Сторінка 1: Розширені функції (платні/преміум)
+    elif page == 1:
+        builder.row(
+            InlineKeyboardButton(text="✅ Перевірити факт (Преміум)", callback_data=f"fact_check_news_{news_id}"),
+            InlineKeyboardButton(text="📊 Аналіз тренду настроїв (Преміум)", callback_data=f"sentiment_trend_analysis_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔍 Виявлення упередженості (Преміум)", callback_data=f"bias_detection_{news_id}"),
+            InlineKeyboardButton(text="📝 Резюме для аудиторії (Преміум)", callback_data=f"audience_summary_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📜 Історичні аналоги (Преміум)", callback_data=f"historical_analogues_{news_id}"),
+            InlineKeyboardButton(text="💥 Аналіз впливу (Преміум)", callback_data=f"impact_analysis_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="💰 Грошовий аналіз (Преміум)", callback_data=f"monetary_impact_{news_id}") # Нова кнопка
+        )
+        builder.row(
+            InlineKeyboardButton(text="⬅️ Назад (AI функції)", callback_data=f"ai_functions_page_0_{news_id}")
+        )
+    
     builder.row(
-        InlineKeyboardButton(text="📝 AI-резюме", callback_data=f"ai_summary_{news_id}"),
-        InlineKeyboardButton(text="🌐 Перекласти", callback_data=f"translate_{news_id}"),
-        InlineKeyboardButton(text="❓ Запитати AI", callback_data=f"ask_news_ai_{news_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🧑‍🤝‍🧑 Ключові сутності", callback_data=f"extract_entities_{news_id}"),
-        InlineKeyboardButton(text="❓ Пояснити термін", callback_data=f"explain_term_{news_id}"),
-        InlineKeyboardButton(text="🏷️ Класифікувати за темами", callback_data=f"classify_topics_{news_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="✅ Перевірити факт", callback_data=f"fact_check_news_{news_id}"),
-        InlineKeyboardButton(text="📊 Аналіз тренду настроїв", callback_data=f"sentiment_trend_analysis_{news_id}"),
-        InlineKeyboardButton(text="🔍 Виявлення упередженості", callback_data=f"bias_detection_{news_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📝 Резюме для аудиторії", callback_data=f"audience_summary_{news_id}"),
-        InlineKeyboardButton(text="📜 Історичні аналоги", callback_data=f"historical_analogues_{news_id}"),
-        InlineKeyboardButton(text="💥 Аналіз впливу", callback_data=f"impact_analysis_{news_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="🤔 Сценарій 'Що якби...'", callback_data=f"what_if_scenario_{news_id}"),
         InlineKeyboardButton(text="🚩 Повідомити про фейк", callback_data=f"report_fake_news_{news_id}")
     )
-    # Додаємо кнопки навігації для новин, якщо вони є
-    # Ці кнопки будуть додані динамічно в send_news_to_user
-    # builder.row(
-    #     InlineKeyboardButton(text="⬅️ Попередня", callback_data="prev_news"),
-    #     InlineKeyboardButton(text="➡️ Далі", callback_data="next_news")
-    # )
     builder.row(
         InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu")
     )
     return builder.as_markup()
+
 
 def get_settings_menu_keyboard():
     builder = InlineKeyboardBuilder()
@@ -441,19 +462,11 @@ def get_source_type_keyboard():
     return builder.as_markup()
 
 # Handlers
-@router.message(CommandStart())
-@router.message(Command("begin"))
-async def command_begin_handler(message: Message, state: FSMContext):
-    logger.info(f"Команда /begin (або /start) отримана та обробляється для користувача: {message.from_user.id} ({message.from_user.full_name})")
-    await state.clear()
-    # Важливо: передаємо повний об'єкт message.from_user, а не лише ID
-    user = await create_or_update_user(message.from_user)
-    welcome_text = f"Привіт, {user.first_name or 'Користувач'}! 👋\nОберіть дію:"
-    await message.answer(welcome_text, reply_markup=get_main_menu_keyboard())
-
+# Видаляємо обробник CommandStart та Command("begin")
 @router.message(Command("menu"))
 async def command_menu_handler(message: Message, state: FSMContext):
     await state.clear()
+    user = await create_or_update_user(message.from_user) # Переконаємося, що користувач існує
     await message.answer("Оберіть дію:", reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("cancel"))
@@ -471,7 +484,6 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
 async def callback_help_menu(callback: CallbackQuery):
     help_text = (
         "<b>Доступні команди:</b>\n"
-        "/begin - Почати роботу з ботом / Головне меню\n"
         "/menu - Головне меню\n"
         "/cancel - Скасувати поточну дію\n"
         "/myprofile - Переглянути ваш профіль\n"
@@ -594,7 +606,7 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
 async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram_id(callback.from_user.id)
     if not user:
-        await callback.message.edit_text("Сталася помилка. Будь ласка, почніть з /begin.", reply_markup=get_main_menu_keyboard())
+        await callback.message.edit_text("Сталася помилка. Будь ласка, почніть з /menu.", reply_markup=get_main_menu_keyboard())
         await callback.answer()
         return
 
@@ -625,7 +637,7 @@ async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
 async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram_id(callback.from_user.id)
     if not user:
-        await callback.message.edit_text("Сталася помилка. Будь ласка, почніть з /begin.", reply_markup=get_main_menu_keyboard())
+        await callback.message.edit_text("Сталася помилка. Будь ласка, почніть з /menu.", reply_markup=get_main_menu_keyboard())
         await callback.answer()
         return
 
@@ -652,6 +664,50 @@ async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
     await send_news_to_user(callback.message.chat.id, prev_news_id, prev_index, len(news_ids), state) # Передаємо state
     await callback.answer()
 
+@router.callback_query(F.data.startswith("ai_news_functions_menu"))
+async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMContext):
+    # Отримуємо news_id з callback_data, якщо він є.
+    # Це дозволить викликати меню AI функцій безпосередньо з новини.
+    parts = callback.data.split('_')
+    news_id = int(parts[-1]) if len(parts) > 3 and parts[-2].isdigit() else None
+    
+    if not news_id: # Якщо викликано не з новини, спробуємо взяти з FSM
+        user_data = await state.get_data()
+        news_id = user_data.get("current_news_id_for_ai_menu") # Припустимо, що ми зберігаємо ID новини для AI меню
+
+    if not news_id:
+        await callback.answer("Будь ласка, спочатку оберіть новину.", show_alert=True)
+        return
+
+    # Зберігаємо news_id для подальших AI-операцій
+    await state.update_data(current_news_id_for_ai_menu=news_id)
+    
+    # Визначаємо поточну сторінку AI функцій
+    page = 0
+    if len(parts) > 2 and parts[2].isdigit():
+        page = int(parts[2])
+
+    await callback.message.edit_text("Оберіть AI-функцію:", reply_markup=get_ai_news_functions_keyboard(news_id, page))
+    await callback.answer()
+
+# Обробники для навігації по сторінках AI функцій
+@router.callback_query(F.data.startswith("ai_functions_page_"))
+async def handle_ai_functions_pagination(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split('_')
+    page = int(parts[3])
+    news_id = int(parts[4])
+
+    user_data = await state.get_data()
+    user_telegram_id = callback.from_user.id
+    user_in_db = await get_user_by_telegram_id(user_telegram_id)
+
+    if page == 1 and (not user_in_db or not user_in_db.is_premium):
+        await callback.answer("Ці функції доступні лише для преміум-користувачів.", show_alert=True)
+        return
+
+    await callback.message.edit_text("Оберіть AI-функцію:", reply_markup=get_ai_news_functions_keyboard(news_id, page))
+    await callback.answer()
+
 
 async def send_news_to_user(chat_id: int, news_id: int, current_index: int, total_news: int, state: FSMContext):
     news_item = await get_news_by_id(news_id)
@@ -673,10 +729,10 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text="🔗 Читати джерело", url=str(news_item.source_url)))
     
-    # Додаємо AI-функції
-    ai_functions_keyboard = get_ai_news_functions_keyboard(news_item.id)
-    for row in ai_functions_keyboard.inline_keyboard:
-        keyboard_builder.row(*row)
+    # Кнопка для виклику меню AI-функцій
+    keyboard_builder.row(
+        InlineKeyboardButton(text="🧠 AI-функції", callback_data=f"ai_news_functions_menu_{news_item.id}")
+    )
 
     # Додаємо навігаційні кнопки
     nav_buttons = []
@@ -761,6 +817,10 @@ async def call_gemini_api(prompt: str) -> Optional[str]:
         logger.error(f"Помилка виклику Gemini API: {e}")
         return "Виникла помилка при зверненні до AI."
 
+async def check_premium_access(user_telegram_id: int) -> bool:
+    user = await get_user_by_telegram_id(user_telegram_id)
+    return user and user.is_premium
+
 @router.callback_query(F.data.startswith("ai_summary_"))
 async def handle_ai_summary(callback: CallbackQuery):
     news_id = int(callback.data.split('_')[2])
@@ -825,14 +885,31 @@ async def handle_extract_entities(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Витягую ключові сутності, зачекайте...")
-    entities = await call_gemini_api(f"Витягни ключові сутності (імена людей, організації, місця, дати) з наступної новини українською мовою, перелічи їх через кому: {news_item.content}")
+    # Змінено промпт для витягування імен, прізвищ, прізвиськ без змін
+    entities = await call_gemini_api(f"Витягни ключові сутності (імена людей, прізвища, прізвиська, організації, місця, дати) з наступної новини українською мовою. Перелічи їх через кому, зберігаючи оригінальний вигляд: {news_item.content}")
     await callback.message.edit_text(f"<b>Ключові сутності:</b>\n{entities}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
 @router.callback_query(F.data.startswith("explain_term_"))
 async def handle_explain_term(callback: CallbackQuery, state: FSMContext):
     news_id = int(callback.data.split('_')[2])
+    news_item = await get_news_by_id(news_id)
+    if not news_item:
+        await callback.answer("Новина не знайдена.", show_alert=True)
+        return
+
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await state.update_data(waiting_for_news_id_for_ai=news_id) # Оновлено назву
     await callback.message.edit_text("Надішліть термін, який потрібно пояснити:", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Скасувати", callback_data="cancel_action")).as_markup())
     await state.set_state(AIAssistant.waiting_for_term_to_explain)
@@ -867,6 +944,12 @@ async def handle_classify_topics(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Класифікую за темами, зачекайте...")
     topics = await call_gemini_api(f"Класифікуй наступну новину за 3-5 основними темами/категоріями українською мовою, перелічи їх через кому: {news_item.content}")
     await callback.message.edit_text(f"<b>Теми:</b>\n{topics}", reply_markup=get_ai_news_functions_keyboard(news_id))
@@ -879,8 +962,14 @@ async def handle_fact_check_news(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Перевіряю факти, зачекайте...")
-    fact_check = await call_gemini_api(f"Виконай швидку перевірку фактів для наступної новини українською мовою. Вкажи, чи є в ній очевидні неточності або маніпуляції: {news_item.content}")
+    fact_check = await call_gemini_api(f"Виконай швидку перевірку фактів для наступної новини українською мовою. Вкажи, чи є в ній очевидні неточності або маніпуляції. Якщо є, наведи джерела: {news_item.content}")
     await callback.message.edit_text(f"<b>Перевірка фактів:</b>\n{fact_check}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
@@ -891,6 +980,12 @@ async def handle_sentiment_trend_analysis(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Аналізую настрій, зачекайте...")
     sentiment = await call_gemini_api(f"Виконай аналіз настрою (позитивний, негативний, нейтральний) для наступної новини українською мовою та поясни чому: {news_item.content}")
     await callback.message.edit_text(f"<b>Аналіз настрою:</b>\n{sentiment}", reply_markup=get_ai_news_functions_keyboard(news_id))
@@ -903,6 +998,12 @@ async def handle_bias_detection(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Виявляю упередженість, зачекайте...")
     bias = await call_gemini_api(f"Вияви потенційну упередженість або маніпуляції в наступній новині українською мовою: {news_item.content}")
     await callback.message.edit_text(f"<b>Виявлення упередженості:</b>\n{bias}", reply_markup=get_ai_news_functions_keyboard(news_id))
@@ -915,6 +1016,12 @@ async def handle_audience_summary(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Генерую резюме для аудиторії, зачекайте...")
     summary = await call_gemini_api(f"Зроби резюме наступної новини українською мовою, адаптований для широкої аудиторії (простою мовою, без складних термінів): {news_item.content}")
     await callback.message.edit_text(f"<b>Резюме для аудиторії:</b>\n{summary}", reply_markup=get_ai_news_functions_keyboard(news_id))
@@ -927,8 +1034,14 @@ async def handle_historical_analogues(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Шукаю історичні аналоги, зачекайте...")
-    analogues = await call_gemini_api(f"Знайди історичні аналоги або схожі події для ситуації, описаної в наступній новині українською мовою: {news_item.content}")
+    analogues = await call_gemini_api(f"Знайди історичні аналоги або схожі події для ситуації, описаної в наступній новині українською мовою. Опиши їх наслідки та вплив, включаючи умовні підрахунки (наприклад, 'це призвело до втрат у розмірі X мільйонів доларів' або 'змінило економічний ландшафт на Y%'): {news_item.content}")
     await callback.message.edit_text(f"<b>Історичні аналоги:</b>\n{analogues}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
@@ -939,22 +1052,36 @@ async def handle_impact_analysis(callback: CallbackQuery):
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
+    
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
     await callback.message.edit_text("Аналізую вплив, зачекайте...")
-    impact = await call_gemini_api(f"Виконай аналіз потенційного впливу наступної новини на різні аспекти (економіка, суспільство, політика) українською мовою: {news_item.content}")
+    impact = await call_gemini_api(f"Виконай аналіз потенційного впливу наступної новини на різні аспекти (економіка, суспільство, політика) українською мовою, включаючи умовні підрахунки (наприклад, 'це може призвести до зростання цін на X%'): {news_item.content}")
     await callback.message.edit_text(f"<b>Аналіз впливу:</b>\n{impact}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("what_if_scenario_"))
-async def handle_what_if_scenario(callback: CallbackQuery):
-    news_id = int(callback.data.split('_')[3])
+@router.callback_query(F.data.startswith("monetary_impact_"))
+async def handle_monetary_impact(callback: CallbackQuery):
+    news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
-    await callback.message.edit_text("Генерую сценарій 'Що якби...', зачекайте...")
-    scenario = await call_gemini_api(f"Створи сценарій 'Що якби...' на основі наступної новини українською мовою, досліджуючи можливі альтернативні розвитку подій: {news_item.content}")
-    await callback.message.edit_text(f"<b>Сценарій 'Що якби...':</b>\n{scenario}", reply_markup=get_ai_news_functions_keyboard(news_id))
+
+    # Перевірка преміум доступу
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer("Ця функція доступна лише для преміум-користувачів.", show_alert=True)
+        return
+
+    await callback.message.edit_text("Виконую грошовий аналіз, зачекайте...")
+    # Додаємо запит до AI для грошового аналізу
+    monetary_analysis = await call_gemini_api(f"Проаналізуй потенційний грошовий вплив подій, описаних у новині, на поточний момент та на протязі року. Вкажи умовні підрахунки та можливі фінансові наслідки українською мовою: {news_item.content}")
+    await callback.message.edit_text(f"<b>Грошовий аналіз:</b>\n{monetary_analysis}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("report_fake_news_"))
 async def handle_report_fake_news(callback: CallbackQuery):
@@ -1018,6 +1145,8 @@ async def fetch_and_post_news_task():
                 news_data['source_id'] = source['id'] # Додаємо source_id для збереження
                 news_data['source_name'] = source['source_name'] # Передаємо ім'я джерела для add_news_to_db
                 news_data['source_type'] = source['source_type'] # Передаємо тип джерела для add_news_to_db
+                # Додаємо user_id_for_source, оскільки джерело додається автоматично, а не користувачем
+                news_data['user_id_for_source'] = None 
                 await add_news_to_db(news_data)
                 async with pool.connection() as conn_update:
                     async with conn_update.cursor() as cur_update:
@@ -1029,28 +1158,61 @@ async def fetch_and_post_news_task():
         except Exception as e:
             # Змінено: використовуємо source_name та source_url
             logger.warning(f"Помилка парсингу джерела {source['source_name']} ({source['source_url']}): {e}")
+
+async def delete_expired_news_task():
+    logger.info("Запущено фонове завдання: delete_expired_news_task")
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            # Видаляємо новини, у яких expires_at менше поточної дати
+            await cur.execute("DELETE FROM news WHERE expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP;")
+            deleted_count = cur.rowcount
+            await conn.commit()
+            if deleted_count > 0:
+                logger.info(f"Видалено {deleted_count} прострочених новин.")
+            else:
+                logger.info("Немає прострочених новин для видалення.")
     
 # Планувальник завдань
 async def scheduler():
     # Запускаємо перше завдання негайно
     await fetch_and_post_news_task()
+    await delete_expired_news_task() # Запускаємо видалення новин при старті
 
     # Плануємо наступні запуски
-    # Розклад: кожні 5 хвилин
-    schedule_expression = '*/5 * * * *'
+    # Розклад для fetch_and_post_news_task: кожні 5 хвилин
+    fetch_schedule_expression = '*/5 * * * *'
+    # Розклад для delete_expired_news_task: кожні 5 годин (наприклад, о 0, 5, 10, 15, 20 годинах)
+    delete_schedule_expression = '0 */5 * * *' 
     
     while True:
         now = datetime.now(timezone.utc)
-        # croniter працює з UTC, тому переконайтеся, що now також UTC
-        itr = croniter(schedule_expression, now)
-        next_run = itr.get_next(datetime)
         
-        # Обчислюємо затримку до наступного запуску
-        delay_seconds = (next_run - now).total_seconds()
+        # Планування fetch_and_post_news_task
+        fetch_itr = croniter(fetch_schedule_expression, now)
+        next_fetch_run = fetch_itr.get_next(datetime)
+        fetch_delay_seconds = (next_fetch_run - now).total_seconds()
+
+        # Планування delete_expired_news_task
+        delete_itr = croniter(delete_schedule_expression, now)
+        next_delete_run = delete_itr.get_next(datetime)
+        delete_delay_seconds = (next_delete_run - now).total_seconds()
+
+        # Обираємо найменшу затримку для наступного сну
+        min_delay = min(fetch_delay_seconds, delete_delay_seconds)
         
-        logger.info(f"Наступний запуск дайджесту через {int(delay_seconds)} секунд.")
-        await asyncio.sleep(delay_seconds)
-        await fetch_and_post_news_task()
+        logger.info(f"Наступний запуск fetch_and_post_news_task через {int(fetch_delay_seconds)} секунд.")
+        logger.info(f"Наступний запуск delete_expired_news_task через {int(delete_delay_seconds)} секунд.")
+        logger.info(f"Бот засинає на {int(min_delay)} секунд.")
+
+        await asyncio.sleep(min_delay)
+
+        # Виконуємо завдання, які мають бути запущені
+        if (datetime.now(timezone.utc) - next_fetch_run).total_seconds() >= -1: # Невелика похибка для точного спрацювання
+            await fetch_and_post_news_task()
+        if (datetime.now(timezone.utc) - next_delete_run).total_seconds() >= -1:
+            await delete_expired_news_task()
+
 
 # FastAPI endpoints
 @app.on_event("startup")
