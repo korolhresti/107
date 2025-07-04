@@ -1182,18 +1182,18 @@ async def send_news_to_channel(news_item: News):
         return
 
     # Витягуємо channel_id або username з посилання
-    channel_id_or_username = NEWS_CHANNEL_LINK.split('/')[-1]
-    if channel_id_or_username.startswith('+'): # Приватний канал за посиланням-запрошенням
-        # Для приватних каналів потрібен їхній числовий ID.
-        # Якщо NEWS_CHANNEL_LINK - це посилання-запрошення, бот не зможе його використати напряму для надсилання.
-        # Потрібно, щоб бот був адміністратором каналу і ви знали його числовий ID (наприклад, -1001234567890).
-        # Для простоти, припустимо, що користувач вказує або @username, або числовий ID.
+    channel_identifier = NEWS_CHANNEL_LINK
+    if 't.me/' in NEWS_CHANNEL_LINK:
+        channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
+    
+    # Перевіряємо, чи це посилання-запрошення (починається з '+')
+    if channel_identifier.startswith('+'):
         logger.error(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' виглядає як посилання-запрошення. Для публікації потрібен @username каналу або його числовий ID (наприклад, -1001234567890).")
         return
-    elif not channel_id_or_username.startswith('@') and not channel_id_or_username.startswith('-'):
+    elif not channel_identifier.startswith('@') and not channel_identifier.startswith('-'):
         # Якщо це не @username і не числовий ID, спробуємо додати @
-        channel_id_or_username = '@' + channel_id_or_username
-        logger.warning(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' не містить '@' або '-' на початку. Спробую використати '{channel_id_or_username}'.")
+        channel_identifier = '@' + channel_identifier
+        logger.warning(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' не містить '@' або '-' на початку. Спробую використати '{channel_identifier}'.")
 
 
     text = (
@@ -1206,7 +1206,7 @@ async def send_news_to_channel(news_item: News):
     try:
         if news_item.image_url:
             await bot.send_photo(
-                chat_id=channel_id_or_username,
+                chat_id=channel_identifier,
                 photo=str(news_item.image_url),
                 caption=text,
                 parse_mode=ParseMode.HTML,
@@ -1214,14 +1214,14 @@ async def send_news_to_channel(news_item: News):
             )
         else:
             await bot.send_message(
-                chat_id=channel_id_or_username,
+                chat_id=channel_identifier,
                 text=text,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=False
             )
-        logger.info(f"Новина '{news_item.title}' успішно опублікована в каналі {channel_id_or_username}.")
+        logger.info(f"Новина '{news_item.title}' успішно опублікована в каналі {channel_identifier}.")
     except Exception as e:
-        logger.error(f"Помилка публікації новини '{news_item.title}' в каналі {channel_id_or_username}: {e}", exc_info=True)
+        logger.error(f"Помилка публікації новини '{news_item.title}' в каналі {channel_identifier}: {e}", exc_info=True)
 
 
 # Автоматичне виставлення новин (фонове завдання)
@@ -1390,6 +1390,21 @@ async def telegram_webhook(request: Request):
         logger.error(f"Помилка обробки вебхука Telegram: {e}", exc_info=True)
         # Важливо повертати 200 OK, навіть якщо сталася помилка, щоб Telegram не намагався повторно надсилати оновлення
     return {"ok": True}
+
+# Додано обробник POST запитів для кореневого шляху
+@app.post("/")
+async def root_webhook(request: Request):
+    logger.info("Отримано запит на / (root webhook)")
+    try:
+        update = await request.json()
+        logger.debug(f"Отримано оновлення Telegram (повний об'єкт) на кореневому шляху: {update}")
+        aiogram_update = types.Update.model_validate(update, context={"bot": bot})
+        await dp.feed_update(bot, aiogram_update)
+        logger.info("Успішно оброблено оновлення Telegram на кореневому шляху.")
+    except Exception as e:
+        logger.error(f"Помилка обробки вебхука Telegram на кореневому шляху: {e}", exc_info=True)
+    return {"ok": True}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
