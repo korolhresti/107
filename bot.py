@@ -1124,6 +1124,11 @@ async def fetch_and_post_news_task():
         news_data = None
         try:
             # Змінено: використовуємо source_type та source_url
+            # Додано перевірку на існування ключів перед доступом
+            if 'source_type' not in source or 'source_url' not in source or 'source_name' not in source:
+                logger.error(f"Джерело з ID {source.get('id', 'N/A')} не має необхідних ключів (source_type, source_url, source_name). Пропускаю.")
+                continue
+
             if source['source_type'] == 'rss':
                 news_data = await rss_parser.parse_rss_feed(source['source_url'])
             elif source['source_type'] == 'web':
@@ -1157,7 +1162,10 @@ async def fetch_and_post_news_task():
                 logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
         except Exception as e:
             # Змінено: використовуємо source_name та source_url
-            logger.warning(f"Помилка парсингу джерела {source['source_name']} ({source['source_url']}): {e}")
+            # Додано перевірку на існування ключів перед використанням у логуванні
+            source_name_log = source.get('source_name', 'N/A')
+            source_url_log = source.get('source_url', 'N/A')
+            logger.warning(f"Помилка парсингу джерела {source_name_log} ({source_url_log}): {e}")
 
 async def delete_expired_news_task():
     logger.info("Запущено фонове завдання: delete_expired_news_task")
