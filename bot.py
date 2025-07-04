@@ -85,26 +85,22 @@ async def get_db_pool():
             raise
     return db_pool
 
-# Функція для перевірки та створення таблиць
-async def check_and_create_tables():
-    pool = await get_db_pool()
-    async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            # Читаємо SQL-схему з файлу
-            try:
-                with open("schema.sql", "r", encoding="utf-8") as f:
-                    schema_sql = f.read()
-                # Розділяємо SQL-скрипт на окремі команди за допомогою ';'
-                # і виконуємо кожну команду окремо. Це потрібно, бо psycopg
-                # не завжди коректно обробляє множинні ALTER TABLE в одному execute.
-                for command in schema_sql.split(';'):
-                    if command.strip(): # Перевіряємо, що команда не порожня
-                        await cur.execute(command)
-                await conn.commit()
-                logger.info("Таблиці перевірено/створено.")
-            except Exception as e:
-                logger.error(f"Помилка при застосуванні схеми БД: {e}")
-                raise
+# Функція для перевірки та створення таблиць - ВИДАЛЕНО
+# async def check_and_create_tables():
+#     pool = await get_db_pool()
+#     async with pool.connection() as conn:
+#         async with conn.cursor() as cur:
+#             try:
+#                 with open("schema.sql", "r", encoding="utf-8") as f:
+#                     schema_sql = f.read()
+#                 for command in schema_sql.split(';'):
+#                     if command.strip():
+#                         await cur.execute(command)
+#                 await conn.commit()
+#                 logger.info("Таблиці перевірено/створено.")
+#             except Exception as e:
+#                 logger.error(f"Помилка при застосуванні схеми БД: {e}")
+#                 raise
 
 # Моделі Pydantic для даних
 from pydantic import BaseModel, HttpUrl
@@ -1041,7 +1037,7 @@ async def handle_historical_analogues(callback: CallbackQuery):
         return
 
     await callback.message.edit_text("Шукаю історичні аналоги, зачекайте...")
-    analogues = await call_gemini_api(f"Знайди історичні аналоги або схожі події для ситуації, описаної в наступній новині українською мовою. Опиши їх наслідки та вплив, включаючи умовні підрахунки (наприклад, 'це призвело до втрат у розмірі X мільйонів доларів' або 'змінило економічний ландшафт на Y%'): {news_item.content}")
+    analogues = await call_gemini_api(f"Знайди історичні аналоги або схожі події для ситуації, описаної в наступній новині українською мовою. Опиши їх наслідки та вплив, включаючи умовні підрахунки (наприклад, 'це призвело до втрат у розмірі X мільйонів доларів' або 'змінило економічний ландер на Y%'): {news_item.content}")
     await callback.message.edit_text(f"<b>Історичні аналоги:</b>\n{analogues}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
@@ -1123,7 +1119,6 @@ async def fetch_and_post_news_task():
     for source in sources:
         news_data = None
         try:
-            # Змінено: використовуємо source_type та source_url
             # Додано перевірку на існування ключів перед доступом
             if 'source_type' not in source or 'source_url' not in source or 'source_name' not in source:
                 logger.error(f"Джерело з ID {source.get('id', 'N/A')} не має необхідних ключів (source_type, source_url, source_name). Пропускаю.")
@@ -1136,21 +1131,17 @@ async def fetch_and_post_news_task():
                 if parsed_data:
                     news_data = parsed_data
                 else:
-                    # Змінено: використовуємо source_name та source_url
                     logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
-                    continue # Пропускаємо це джерело і переходимо до наступного
+                    continue
             elif source['source_type'] == 'telegram':
                 news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
             elif source['source_type'] == 'social_media':
-                # Для social_media потрібно передавати тип платформи, наприклад 'instagram' або 'twitter'
-                # Наразі використовуємо заглушку, яка не вимагає цього
                 news_data = await social_media_parser.get_social_media_posts(source['source_url'], "general")
             
             if news_data:
-                news_data['source_id'] = source['id'] # Додаємо source_id для збереження
-                news_data['source_name'] = source['source_name'] # Передаємо ім'я джерела для add_news_to_db
-                news_data['source_type'] = source['source_type'] # Передаємо тип джерела для add_news_to_db
-                # Додаємо user_id_for_source, оскільки джерело додається автоматично, а не користувачем
+                news_data['source_id'] = source['id']
+                news_data['source_name'] = source['source_name']
+                news_data['source_type'] = source['source_type']
                 news_data['user_id_for_source'] = None 
                 await add_news_to_db(news_data)
                 async with pool.connection() as conn_update:
@@ -1158,11 +1149,8 @@ async def fetch_and_post_news_task():
                         await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
                         await conn_update.commit()
             else:
-                # Змінено: використовуємо source_name та source_url
                 logger.warning(f"Не вдалося спарсити контент з джерела: {source['source_name']} ({source['source_url']}). Пропускаю.")
         except Exception as e:
-            # Змінено: використовуємо source_name та source_url
-            # Додано перевірку на існування ключів перед використанням у логуванні
             source_name_log = source.get('source_name', 'N/A')
             source_url_log = source.get('source_url', 'N/A')
             logger.warning(f"Помилка парсингу джерела {source_name_log} ({source_url_log}): {e}")
@@ -1222,7 +1210,7 @@ async def scheduler():
 # FastAPI endpoints
 @app.on_event("startup")
 async def on_startup():
-    await check_and_create_tables()
+    # check_and_create_tables() ВИДАЛЕНО - схема застосовується через start.sh
     # Встановлення вебхука Telegram
     webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
