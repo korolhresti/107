@@ -215,6 +215,11 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 # Якщо джерела немає, додаємо його
                 # user_id тут може бути None, якщо новина додається автоматично планувальником
                 user_id_for_source = news_data.get('user_id_for_source') # Додаємо це поле в news_data при парсингу
+                
+                # Визначаємо source_name з URL
+                parsed_url = HttpUrl(news_data['source_url'])
+                source_name = parsed_url.host if parsed_url.host else 'Невідоме джерело'
+
                 await cur.execute(
                     """
                     INSERT INTO sources (user_id, source_name, source_url, source_type, added_at)
@@ -226,7 +231,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                         last_parsed = NULL -- Скинути, щоб перепарсити
                     RETURNING id;
                     """,
-                    (user_id_for_source, news_data.get('source_name', 'Невідоме джерело'), str(news_data['source_url']), news_data.get('source_type', 'web'))
+                    (user_id_for_source, source_name, str(news_data['source_url']), news_data.get('source_type', 'web'))
                 )
                 source_id = await cur.fetchone()['id']
                 logger.info(f"Нове джерело додано: {news_data['source_url']}")
@@ -238,11 +243,14 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 logger.info(f"Новина з URL {news_data['source_url']} вже існує. Пропускаю.")
                 return None
 
+            # Визначаємо статус модерації: 'approved' для автоматично спарсених, 'pending' для доданих користувачем
+            moderation_status = 'approved' if news_data.get('user_id_for_source') is None else 'pending'
+
             # Додавання новини
             await cur.execute(
                 """
-                INSERT INTO news (source_id, title, content, source_url, image_url, published_at, ai_summary, ai_classified_topics)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO news (source_id, title, content, source_url, image_url, published_at, ai_summary, ai_classified_topics, moderation_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *;
                 """,
                 (
@@ -253,7 +261,8 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                     str(news_data['image_url']) if news_data.get('image_url') else None,
                     news_data['published_at'],
                     news_data.get('ai_summary'),
-                    json.dumps(news_data.get('ai_classified_topics')) if news_data.get('ai_classified_topics') else None
+                    json.dumps(news_data.get('ai_classified_topics')) if news_data.get('ai_classified_topics') else None,
+                    moderation_status
                 )
             )
             new_news = await cur.fetchone()
@@ -1108,6 +1117,43 @@ async def handle_report_fake_news(callback: CallbackQuery):
     await callback.answer("Дякуємо! Ваше повідомлення про фейкову новину було надіслано на модерацію.", show_alert=True)
     await callback.message.edit_text("Дякуємо за ваш внесок! Оберіть наступну дію:", reply_markup=get_ai_news_functions_keyboard(news_id))
 
+async def send_news_to_channel(news_item: News):
+    """
+    Надсилає новину до Telegram-каналу.
+    """
+    if not NEWS_CHANNEL_LINK:
+        logger.warning("NEWS_CHANNEL_LINK не налаштовано. Новина не буде опублікована в каналі.")
+        return
+
+    channel_id_or_username = NEWS_CHANNEL_LINK.split('/')[-1] if 't.me/' in NEWS_CHANNEL_LINK else NEWS_CHANNEL_LINK
+
+    text = (
+        f"<b>Нова новина:</b> {news_item.title}\n\n"
+        f"{news_item.content[:500]}...\n\n" # Обрізаємо контент для каналу
+        f"🔗 <a href='{news_item.source_url}'>Читати повністю</a>\n"
+        f"Опубліковано: {news_item.published_at.strftime('%d.%m.%Y %H:%M')}"
+    )
+
+    try:
+        if news_item.image_url:
+            await bot.send_photo(
+                chat_id=channel_id_or_username,
+                photo=str(news_item.image_url),
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False
+            )
+        else:
+            await bot.send_message(
+                chat_id=channel_id_or_username,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False
+            )
+        logger.info(f"Новина '{news_item.title}' успішно опублікована в каналі {channel_id_or_username}.")
+    except Exception as e:
+        logger.error(f"Помилка публікації новини '{news_item.title}' в каналі {channel_id_or_username}: {e}", exc_info=True)
+
 
 # Автоматичне виставлення новин (фонове завдання)
 async def fetch_and_post_news_task():
@@ -1145,8 +1191,13 @@ async def fetch_and_post_news_task():
                 news_data['source_id'] = source['id']
                 news_data['source_name'] = source['source_name']
                 news_data['source_type'] = source['source_type']
-                news_data['user_id_for_source'] = None 
-                await add_news_to_db(news_data)
+                news_data['user_id_for_source'] = None # Explicitly set to None for auto-fetched news
+                
+                added_news_item = await add_news_to_db(news_data)
+                if added_news_item:
+                    # Send to news channel if successfully added and approved (which it should be for auto-parsed)
+                    await send_news_to_channel(added_news_item)
+                
                 async with pool.connection() as conn_update:
                     async with conn_update.cursor() as cur_update:
                         await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
@@ -1156,7 +1207,7 @@ async def fetch_and_post_news_task():
         except Exception as e:
             source_name_log = source.get('source_name', 'N/A')
             source_url_log = source.get('source_url', 'N/A')
-            logger.warning(f"Помилка парсингу джерела {source_name_log} ({source_url_log}): {e}")
+            logger.warning(f"Помилка парсингу джерела {source_name_log} ({source_url_log}): {e}", exc_info=True) # Додано exc_info=True для повного трасування помилки
 
 async def delete_expired_news_task():
     logger.info("Запущено фонове завдання: delete_expired_news_task")
