@@ -85,23 +85,6 @@ async def get_db_pool():
             raise
     return db_pool
 
-# Функція для перевірки та створення таблиць - ВИДАЛЕНО
-# async def check_and_create_tables():
-#     pool = await get_db_pool()
-#     async with pool.connection() as conn:
-#         async with conn.cursor() as cur:
-#             try:
-#                 with open("schema.sql", "r", encoding="utf-8") as f:
-#                     schema_sql = f.read()
-#                 for command in schema_sql.split(';'):
-#                     if command.strip():
-#                         await cur.execute(command)
-#                 await conn.commit()
-#                 logger.info("Таблиці перевірено/створено.")
-#             except Exception as e:
-#                 logger.error(f"Помилка при застосуванні схеми БД: {e}")
-#                 raise
-
 # Моделі Pydantic для даних
 from pydantic import BaseModel, HttpUrl
 
@@ -469,7 +452,12 @@ def get_source_type_keyboard():
     return builder.as_markup()
 
 # Handlers
-# Видаляємо обробник CommandStart та Command("begin")
+@router.message(CommandStart()) # Обробник для команди /start
+async def command_start_handler(message: Message, state: FSMContext):
+    await state.clear()
+    user = await create_or_update_user(message.from_user) # Переконаємося, що користувач існує
+    await message.answer(f"Привіт, {message.from_user.first_name}! Я ваш AI News Bot. Оберіть дію:", reply_markup=get_main_menu_keyboard())
+
 @router.message(Command("menu"))
 async def command_menu_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -491,6 +479,7 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
 async def callback_help_menu(callback: CallbackQuery):
     help_text = (
         "<b>Доступні команди:</b>\n"
+        "/start - Почати роботу з ботом та перейти до головного меню\n"
         "/menu - Головне меню\n"
         "/cancel - Скасувати поточну дію\n"
         "/myprofile - Переглянути ваш профіль\n"
@@ -554,6 +543,10 @@ async def process_source_type(callback: CallbackQuery, state: FSMContext):
         pool = await get_db_pool()
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
+                # Визначаємо source_name з URL
+                parsed_url = HttpUrl(source_url)
+                source_name = parsed_url.host if parsed_url.host else 'Невідоме джерело'
+
                 await cur.execute(
                     """
                     INSERT INTO sources (user_id, source_name, source_url, source_type, added_at)
@@ -565,7 +558,7 @@ async def process_source_type(callback: CallbackQuery, state: FSMContext):
                         last_parsed = NULL -- Скинути, щоб перепарсити
                     RETURNING id;
                     """,
-                    (user_db_id, source_url.split('//')[-1].split('/')[0], source_url, source_type)
+                    (user_db_id, source_name, source_url, source_type)
                 )
                 source_id = await cur.fetchone()[0]
                 await conn.commit()
