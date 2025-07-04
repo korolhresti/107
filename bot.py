@@ -1175,10 +1175,6 @@ async def delete_expired_news_task():
     
 # Планувальник завдань
 async def scheduler():
-    # Запускаємо перше завдання негайно
-    await fetch_and_post_news_task()
-    await delete_expired_news_task() # Запускаємо видалення новин при старті
-
     # Плануємо наступні запуски
     # Розклад для fetch_and_post_news_task: кожні 5 хвилин
     fetch_schedule_expression = '*/5 * * * *'
@@ -1198,7 +1194,7 @@ async def scheduler():
         next_delete_run = delete_itr.get_next(datetime)
         delete_delay_seconds = (next_delete_run - now).total_seconds()
 
-        # Обираємо найменшу затримку для наступного сну
+        # Обираємо найменшу затримку до наступного запуску
         min_delay = min(fetch_delay_seconds, delete_delay_seconds)
         
         logger.info(f"Наступний запуск fetch_and_post_news_task через {int(fetch_delay_seconds)} секунд.")
@@ -1208,7 +1204,8 @@ async def scheduler():
         await asyncio.sleep(min_delay)
 
         # Виконуємо завдання, які мають бути запущені
-        if (datetime.now(timezone.utc) - next_fetch_run).total_seconds() >= -1: # Невелика похибка для точного спрацювання
+        # Використовуємо невеликий допуск, щоб уникнути проблем з точністю часу
+        if (datetime.now(timezone.utc) - next_fetch_run).total_seconds() >= -1:
             await fetch_and_post_news_task()
         if (datetime.now(timezone.utc) - next_delete_run).total_seconds() >= -1:
             await delete_expired_news_task()
@@ -1272,16 +1269,31 @@ async def read_dashboard(api_key: str = Depends(get_api_key)):
         return f.read()
 
 @app.get("/users", response_class=HTMLResponse)
-async def read_users(api_key: str = Depends(get_api_key)):
-    with open("users.html", "r", encoding="utf-8") as f:
-        return f.read()
+async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            users = await cur.fetchall()
+            return users
 
 @app.get("/reports", response_class=HTMLResponse)
-async def read_reports(api_key: str = Depends(get_api_key)):
-    with open("reports.html", "r", encoding="utf-8") as f:
-        return f.read()
+async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            query = "SELECT r.*, u.username, u.first_name, n.title as news_title, n.source_url as news_source_url FROM reports r LEFT JOIN users u ON r.user_id = u.id LEFT JOIN news n ON r.target_id = n.id WHERE r.target_type = 'news'"
+            params = []
+            # if status: # Якщо буде потреба фільтрувати звіти за статусом
+            #     query += " WHERE r.status = %s"
+            #     params.append(status)
+            query += " ORDER BY r.created_at DESC LIMIT %s OFFSET %s;"
+            params.extend([limit, offset])
+            await cur.execute(query, tuple(params))
+            reports = await cur.fetchall()
+            return reports
 
-# API Endpoints for Admin Panel
+
 @app.get("/api/admin/stats")
 async def get_admin_stats(api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
@@ -1302,15 +1314,6 @@ async def get_admin_stats(api_key: str = Depends(get_api_key)):
                 "total_news": total_news,
                 "active_users_count": active_users_count
             }
-
-@app.get("/api/admin/users")
-async def get_admin_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
-    pool = await get_db_pool()
-    async with pool.connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
-            users = await cur.fetchall()
-            return users
 
 @app.get("/api/admin/news")
 async def get_admin_news(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0, status: Optional[str] = None):
