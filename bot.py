@@ -698,10 +698,14 @@ async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("ai_news_functions_menu"))
 async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMContext):
     logger.info(f"Отримано callback 'ai_news_functions_menu' від користувача {callback.from_user.id}")
-    # Отримуємо news_id з callback_data, якщо він є.
-    # Це дозволить викликати меню AI функцій безпосередньо з новини.
+    # Отримуємо news_id з callback_data.
+    # Формат: ai_news_functions_menu_{news_id}
     parts = callback.data.split('_')
-    news_id = int(parts[-1]) if len(parts) > 3 and parts[-2].isdigit() else None
+    # Перевіряємо, чи достатньо частин і чи остання частина є числом (news_id)
+    if len(parts) >= 4 and parts[3].isdigit(): # Corrected index for news_id
+        news_id = int(parts[3]) # news_id is now at index 3
+    else:
+        news_id = None
     
     if not news_id: # Якщо викликано не з новини, спробуємо взяти з FSM
         user_data = await state.get_data()
@@ -717,8 +721,9 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMConte
     
     # Визначаємо поточну сторінку AI функцій
     page = 0
-    if len(parts) > 2 and parts[2].isdigit():
-        page = int(parts[2])
+    # The page number is expected to be in the format ai_functions_page_{page_num}_{news_id}
+    # So for ai_news_functions_menu_{news_id}, page is always 0 initially.
+    # The 'ai_functions_page_' handler will manage pagination.
 
     await callback.message.edit_text("Оберіть AI-функцію:", reply_markup=get_ai_news_functions_keyboard(news_id, page))
     await callback.answer()
@@ -728,8 +733,8 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery, state: FSMConte
 async def handle_ai_functions_pagination(callback: CallbackQuery, state: FSMContext):
     logger.info(f"Отримано callback 'ai_functions_page_' від користувача {callback.from_user.id}")
     parts = callback.data.split('_')
-    page = int(parts[3])
-    news_id = int(parts[4])
+    page = int(parts[3]) # Page number is at index 3
+    news_id = int(parts[4]) # News ID is at index 4
 
     user_data = await state.get_data()
     user_telegram_id = callback.from_user.id
@@ -1196,9 +1201,15 @@ async def send_news_to_channel(news_item: News):
         logger.warning(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' не містить '@' або '-' на початку. Спробую використати '{channel_identifier}'.")
 
 
+    # Скорочуємо контент для каналу, щоб уникнути помилки "message caption is too long"
+    # Додаємо "..." якщо контент обрізано
+    display_content = news_item.content
+    if len(display_content) > 250:
+        display_content = display_content[:247] + "..." # 247 + 3 dots = 250
+
     text = (
         f"<b>Нова новина:</b> {news_item.title}\n\n"
-        f"{news_item.content[:500]}...\n\n" # Обрізаємо контент для каналу
+        f"{display_content}\n\n"
         f"🔗 <a href='{news_item.source_url}'>Читати повністю</a>\n"
         f"Опубліковано: {news_item.published_at.strftime('%d.%m.%Y %H:%M')}"
     )
