@@ -37,8 +37,7 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 
-# Import google_search tool
-from tools import google_search
+# Removed: from tools import google_search - google_search is a global tool
 
 load_dotenv()
 
@@ -49,9 +48,9 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
 NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-MONOBANK_CARD_NUMBER = "4441111153021484" # Monobank card for donations
-HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6" # Link for "Help Buy"
-HELP_SELL_BOT_LINK = "https://t.me/BigmoneycreateBot" # Link for "Help Sell"
+MONOBANK_CARD_NUMBER = "4441111153021484"
+HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
+HELP_SELL_BOT_LINK = "https://t.me/BigmoneycreateBot"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -130,20 +129,20 @@ class User(BaseModel):
     last_active: Optional[datetime] = None
     language: Optional[str] = 'uk'
     auto_notifications: Optional[bool] = False
-    digest_frequency: Optional[str] = 'daily'
-    safe_mode: Optional[bool] = False
-    current_feed_id: Optional[int] = None
-    is_premium: Optional[bool] = False
-    premium_expires_at: Optional[datetime] = None
-    level: Optional[int] = 1
-    badges: Optional[List[str]] = []
-    inviter_id: Optional[int] = None
-    view_mode: Optional[str] = 'detailed'
-    premium_invite_count: Optional[int] = 0
-    digest_invite_count: Optional[int] = 0
-    is_pro: Optional[bool] = False
-    ai_requests_today: Optional[int] = 0
-    ai_last_request_date: Optional[datetime] = None
+    digest_frequency TEXT DEFAULT 'daily',
+    safe_mode BOOLEAN DEFAULT FALSE,
+    current_feed_id INTEGER,
+    is_premium BOOLEAN DEFAULT FALSE,
+    premium_expires_at TIMESTAMP WITH TIME ZONE,
+    level INTEGER DEFAULT 1,
+    badges JSONB DEFAULT '[]'::jsonb,
+    inviter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    view_mode TEXT DEFAULT 'detailed',
+    premium_invite_count INTEGER DEFAULT 0,
+    digest_invite_count INTEGER DEFAULT 0,
+    is_pro BOOLEAN DEFAULT FALSE,
+    ai_requests_today INTEGER DEFAULT 0,
+    ai_last_request_date DATE DEFAULT CURRENT_DATE
 
 class Source(BaseModel):
     id: Optional[int] = None
@@ -395,247 +394,6 @@ MESSAGES = {
         'pro_tier_info': "Pro-рівень: доступ до API та розширені інтеграції. Зв'яжіться з адміном.",
         'help_sell_btn': "🤝 Допоможи продати",
         'help_buy_btn': "🛒 Допоможи купити",
-        'help_sell_message': "Зверніться до нашого бота-помічника з продажу: {bot_link}",
-        'help_buy_message': "Перегляньте канал з найкращими пропозиціями: {channel_link}"
-    },
-    'en': {
-        'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
-        'main_menu_prompt': "Choose an action:",
-        'help_text': ("<b>Commands:</b>\n"
-                      "/start - Start\n"
-                      "/menu - Menu\n"
-                      "/cancel - Cancel\n"
-                      "/my_news - My News\n"
-                      "/add_source - Add Source\n"
-                      "/my_sources - My Sources\n"
-                      "/ask_expert - Expert\n"
-                      "/invite - Invite\n"
-                      "/subscribe - Subscriptions\n"
-                      "/donate - Donate ☕\n"
-                      "<b>AI:</b> below news.\n"
-                      "<b>AI Media:</b> /ai_media_menu"),
-        'action_cancelled': "Cancelled. Choose action:",
-        'add_source_prompt': "Send source URL:",
-        'invalid_url': "Invalid URL.",
-        'source_url_not_found': "Source URL not found.",
-        'source_added_success': "Source '{source_url}' added!",
-        'add_source_error': "Error adding source.",
-        'no_new_news': "No new news.",
-        'news_not_found': "News not found.",
-        'no_more_news': "No more news.",
-        'first_news': "First news.",
-        'error_start_menu': "Error. Start with /menu.",
-        'ai_functions_prompt': "AI Functions:",
-        'ai_function_premium_only': "Premium only.",
-        'news_title_label': "Title:",
-        'news_content_label': "Content:",
-        'published_at_label': "Published:",
-        'news_progress': "News {current_index} of {total_news}",
-        'read_source_btn': "🔗 Source",
-        'ai_functions_btn': "🧠 AI Functions",
-        'prev_btn': "⬅️ Previous",
-        'next_btn': "➡️ Next",
-        'main_menu_btn': "⬅️ Menu",
-        'generating_ai_summary': "Generating AI summary...",
-        'ai_summary_label': "AI Summary:",
-        'select_translate_language': "Select language:",
-        'translating_news': "Translating...",
-        'translation_label': "Translation to {language_name}:",
-        'generating_audio': "Generating audio...",
-        'audio_news_caption': "🔊 News: {title}",
-        'audio_error': "Error generating audio.",
-        'ask_news_ai_prompt': "Your question:",
-        'processing_question': "Processing...",
-        'ai_response_label': "AI Response:",
-        'ai_news_not_found': "News not found.",
-        'ask_free_ai_prompt': "Your question to AI:",
-        'extracting_entities': "Extracting entities...",
-        'entities_label': "Entities:",
-        'explain_term_prompt': "Term to explain:",
-        'explaining_term': "Explaining...",
-        'term_explanation_label': "Explanation of '{term}':",
-        'classifying_topics': "Classifying topics...",
-        'topics_label': "Topics:",
-        'checking_facts': "Checking facts...",
-        'fact_check_label': "Fact Check:",
-        'analyzing_sentiment': "Analyzing sentiment...",
-        'sentiment_label': "Sentiment:",
-        'detecting_bias': "Detecting bias...",
-        'bias_label': "Bias Detection:",
-        'generating_audience_summary': "Generating audience summary...",
-        'audience_summary_label': "Audience Summary:",
-        'searching_historical_analogues': "Searching analogues...",
-        'historical_analogues_label': "Historical Analogues:",
-        'analyzing_impact': "Analyzing impact...",
-        'impact_label': "Impact Analysis:",
-        'performing_monetary_analysis': "Performing monetary analysis...",
-        'monetary_analysis_label': "Monetary Analysis:",
-        'bookmark_added': "News added to bookmarks!",
-        'bookmark_already_exists': "Already bookmarked.",
-        'bookmark_add_error': "Error bookmarking.",
-        'bookmark_removed': "News removed from bookmarks!",
-        'bookmark_not_found': "News not in bookmarks.",
-        'bookmark_remove_error': "Error removing bookmark.",
-        'no_bookmarks': "No bookmarks yet.",
-        'your_bookmarks_label': "Your Bookmarks:",
-        'report_fake_news_btn': "🚩 Report Fake News",
-        'report_already_sent': "Report already sent.",
-        'report_sent_success': "Thank you! Report sent.",
-        'report_action_done': "Thank you! Choose action:",
-        'user_not_identified': "User not identified.",
-        'no_admin_access': "No access.",
-        'loading_moderation_news': "Loading news...",
-        'no_pending_news': "No news pending moderation.",
-        'moderation_news_label': "News for moderation ({current_index} of {total_news}):",
-        'source_label': "Source:",
-        'status_label': "Status:",
-        'approve_btn': "✅ Approve",
-        'reject_btn': "❌ Reject",
-        'news_approved': "News {news_id} approved!",
-        'news_rejected': "News {news_id} rejected!",
-        'all_moderation_done': "All news processed.",
-        'no_more_moderation_news': "No more news.",
-        'first_moderation_news': "First news.",
-        'source_stats_label': "📊 Source Stats (top-10):",
-        'source_stats_entry': "{idx}. {source_name}: {count} publications",
-        'no_source_stats': "No source stats available.",
-        'your_invite_code': "Your invite code: <code>{invite_code}</code>\nShare: {invite_link}",
-        'invite_error': "Error generating code.",
-        'daily_digest_header': "📰 Your daily AI News Digest:",
-        'daily_digest_entry': "<b>{idx}. {title}</b>\n{summary}\n🔗 <a href='{source_url}'>Read</a>\n\n",
-        'no_news_for_digest': "No news for digest.",
-        'ai_rate_limit_exceeded': "Too many AI requests. Used {count}/{limit}. Try tomorrow or premium.",
-        'what_new_digest_header': "👋 Hello! You missed {count} news. Digest:",
-        'what_new_digest_footer': "\n\nSee all news? Click '📰 My News'.",
-        'cancel_btn': "Cancel",
-        'toggle_notifications_btn': "🔔 Notifications",
-        'set_digest_frequency_btn': "🔄 Digest Frequency",
-        'toggle_safe_mode_btn': "🔒 Safe Mode",
-        'set_view_mode_btn': "👁️ View Mode",
-        'ai_summary_btn': "📝 AI Summary",
-        'translate_btn': "🌐 Translate",
-        'ask_ai_btn': "❓ Ask AI",
-        'extract_entities_btn': "🧑‍🤝‍🧑 Entities",
-        'explain_term_btn': "❓ Explain",
-        'classify_topics_btn': "🏷️ Topics",
-        'listen_news_btn': "🔊 Listen",
-        'next_ai_page_btn': "➡️ Next (AI)",
-        'fact_check_btn': "✅ Fact Check (Premium)",
-        'sentiment_trend_analysis_btn': "📊 Sentiment Trend (Premium)",
-        'bias_detection_btn': "🔍 Bias Detection (Premium)",
-        'audience_summary_btn': "📝 Audience Summary (Premium)",
-        'historical_analogues_btn': "📜 Analogues (Premium)",
-        'impact_analysis_btn': "💥 Impact Analysis (Premium)",
-        'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
-        'prev_ai_page_btn': "⬅️ Back (AI)",
-        'bookmark_add_btn': "❤️ Bookmark",
-        'comments_btn': "💬 Comments",
-        'english_lang': "🇬🇧 English",
-        'polish_lang': "🇵🇱 Polish",
-        'german_lang': "🇩🇪 German",
-        'spanish_lang': "🇪🇸 Spanish",
-        'french_lang': "🇫🇷 French",
-        'ukrainian_lang': "🇺🇦 Ukrainian",
-        'back_to_ai_btn': "⬅️ Back to AI",
-        'ask_free_ai_btn': "💬 Ask AI",
-        'news_channel_link_error': "Invalid channel link.",
-        'news_channel_link_warning': "Invalid link format.",
-        'news_published_success': "News '{title}' published to channel {identifier}.",
-        'news_publish_error': "Error publishing '{title}': {error}",
-        'source_parsing_warning': "Failed to parse from source: {name} ({url}).",
-        'source_parsing_error': "Error parsing source {name} ({url}): {error}",
-        'no_active_sources': "No active sources.",
-        'news_already_exists': "News with URL {url} already exists.",
-        'news_added_success': "News '{title}' added.",
-        'news_not_added': "News from source {name} not added.",
-        'source_last_parsed_updated': "Updated last_parsed for source {name}.",
-        'deleted_expired_news': "Deleted {count} expired news.",
-        'no_expired_news': "No expired news.",
-        'daily_digest_no_users': "No users for digest.",
-        'daily_digest_no_news': "No news for digest for user {user_id}.",
-        'daily_digest_sent_success': "Digest sent to user {user_id}.",
-        'daily_digest_send_error': "Error sending digest to user {user_id}: {error}",
-        'invite_link_label': "Invite Link",
-        'source_stats_top_10': "📊 Source Stats (top-10):",
-        'source_stats_item': "{idx}. {source_name}: {publication_count} publications",
-        'no_source_stats_available': "No source stats.",
-        'moderation_news_header': "News for moderation ({current_index} of {total_news}):",
-        'moderation_news_approved': "News {news_id} approved!",
-        'moderation_news_rejected': "News {news_id} rejected!",
-        'moderation_all_done': "All news processed.",
-        'moderation_no_more_news': "No more news.",
-        'moderation_first_news': "First news.",
-        'ai_smart_summary_prompt': "Select summary type:",
-        'ai_smart_summary_1_sentence': "1 sentence",
-        'ai_smart_summary_3_facts': "3 facts",
-        'ai_smart_summary_deep_dive': "Deep dive",
-        'ai_smart_summary_generating': "Generating {summary_type} summary...",
-        'ai_smart_summary_label': "<b>AI Summary ({summary_type}):</b>\n{summary}",
-        'ask_expert_prompt': "Select expert:",
-        'expert_portnikov_btn': "🕵️‍♂️ Vitaliy Portnikov",
-        'expert_libsits_btn': "🧠 Igor Libsits",
-        'ask_expert_question_prompt': "Your question to {expert_name}:",
-        'expert_response_label': "Response from {expert_name}:",
-        'price_analysis_prompt': "Product description and photo:",
-        'price_analysis_generating': "Analyzing price...",
-        'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
-        'ai_media_menu_prompt': "AI Media Functions:",
-        'generate_ai_news_btn': "📝 AI News (trends)",
-        'youtube_to_news_btn': "▶️ YouTube → News",
-        'create_filtered_channel_btn': "➕ Create My Channel",
-        'create_ai_media_btn': "🤖 Create AI Media",
-        'ai_news_generating': "Generating AI news...",
-        'ai_news_generated_success': "AI news '{title}' generated.",
-        'youtube_url_prompt': "YouTube video link:",
-        'youtube_processing': "Processing YouTube...",
-        'youtube_summary_label': "<b>YouTube News:</b>\n{summary}",
-        'filtered_channel_prompt': "Channel name and topics (comma-separated):",
-        'filtered_channel_creating': "Creating channel '{channel_name}' with topics: {topics}...",
-        'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
-        'ai_media_creating': "Creating AI media...",
-        'ai_media_created': "Your AI media '{media_name}' 'created'!",
-        'analytics_menu_prompt': "Analytics:",
-        'infographics_btn': "📈 Infographics",
-        'trust_index_btn': "⚖️ Trust Index",
-        'long_term_connections_btn': "🔗 Connections",
-        'ai_prediction_btn': "🔮 AI Prediction",
-        'infographics_generating': "Generating infographics...",
-        'infographics_result': "<b>Infographics:</b>\n{result}",
-        'trust_index_calculating': "Calculating trust index...",
-        'trust_index_result': "<b>Trust Index:</b>\n{result}",
-        'long_term_connections_generating': "Searching connections...",
-        'long_term_connections_result': "<b>Long-Term Connections:</b>\n{result}",
-        'ai_prediction_generating': "Generating AI prediction...",
-        'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
-        'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
-        'onboarding_step_2': "Step 2: View news '📰 My News'.",
-        'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
-        'reaction_interesting': "🔥 Interesting",
-        'reaction_not_much': "😐 Not much",
-        'reaction_delete': "❌ Delete",
-        'reaction_saved': "Reaction saved!",
-        'reaction_deleted': "News deleted.",
-        'premium_granted': "Congrats! Premium access granted!",
-        'digest_granted': "Congrats! Free daily AI digest granted!",
-        'donate_message': "Thanks for support! Monobank card: <code>{card_number}</code> ☕",
-        'my_sources_header': "Your sources:",
-        'no_sources_added': "No sources added.",
-        'source_item': "{idx}. {source_name} ({source_url}) - {status} [🗑️ /source_delete_{source_id}]",
-        'source_deleted_success': "Source deleted.",
-        'source_delete_error': "Error deleting source.",
-        'subscribe_menu_prompt': "Manage subscriptions:",
-        'no_subscriptions': "No topic subscriptions.",
-        'your_subscriptions': "Your subscriptions: {topics}",
-        'add_subscription_prompt': "Topics to subscribe (comma-separated):",
-        'subscription_added': "Subscriptions '{topics}' added!",
-        'subscription_removed': "Subscription '{topic}' removed.",
-        'add_subscription_btn': "➕ Add Subscription",
-        'remove_subscription_btn': "➖ Remove Subscription",
-        'remove_subscription_prompt': "Topic to remove:",
-        'subscription_not_found': "Topic '{topic}' not found.",
-        'pro_tier_info': "Pro-tier: API access & extended integrations. Contact admin.",
-        'help_sell_btn': "🤝 Help Sell",
-        'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
         'help_buy_message': "Check the channel with best offers: {channel_link}"
     }
@@ -1795,7 +1553,22 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
 
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
-    prompt = f"Проаналізуй опис товару '{user_input}' та, якщо є, зображення. Спробуй розпізнати товар, запропонуй можливі місця придбання та розрахуй приблизну ціну в UAH, вказуючи фактори, що впливають на ціну, та можливі аналоги."
+    # Use google_search to get real-time price info
+    search_query = f"ціна {user_input} купити Україна"
+    if image_data_base64:
+        search_query = f"розпізнати товар та ціна {user_input} купити Україна" # Enhance query if image is present
+
+    search_results = await asyncio.to_thread(google_search.search, queries=[search_query])
+    
+    price_context = []
+    for res_set in search_results:
+        for res in res_set.results:
+            if res.snippet:
+                price_context.append(res.snippet)
+    
+    context_text = "\n\n".join(price_context[:3]) # Use top 3 search results as context
+
+    prompt = f"Проаналізуй опис товару '{user_input}' та, якщо є, зображення. Використай наступну інформацію з пошуку: {context_text}. Розрахуй приблизну ціну в UAH, запропонуй можливі місця придбання та вкажи фактори, що впливають на ціну, та можливі аналоги. Будь максимально точним."
     price_analysis_result = await call_gemini_api(prompt, user_telegram_id=message.from_user.id, image_data=image_data_base64)
     
     await message.answer(get_message(user_lang, 'price_analysis_result', result=price_analysis_result), reply_markup=get_ai_media_menu_keyboard(user_lang))
@@ -1836,7 +1609,6 @@ async def handle_generate_ai_news(callback: CallbackQuery):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_news_generating'))
     
-    # Use google_search to get recent news on broad topics
     search_queries = [
         "latest global news trends",
         "актуальні світові новини",
@@ -1852,7 +1624,7 @@ async def handle_generate_ai_news(callback: CallbackQuery):
             if res.snippet:
                 context_news.append(res.snippet)
     
-    context_text = "\n\n".join(context_news[:5]) # Take top 5 snippets for context
+    context_text = "\n\n".join(context_news[:5])
     
     prompt = f"На основі наступних актуальних новин та трендів, згенеруй коротку, цікаву новину українською мовою. Новина має бути готова до публікації і не містити прямого посилання на джерела, а бути оригінальним текстом, що відображає тренди:\n\n{context_text}\n\nAI-новина:"
     ai_generated_content = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
@@ -1896,12 +1668,19 @@ async def process_youtube_url(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'youtube_processing'))
     
-    # Simulate YouTube transcript API call, but make it more dynamic with Gemini
-    # In a real app, you'd use a library like youtube-transcript-api or a dedicated service.
-    prompt_for_mock_transcript = f"Згенеруй короткий, реалістичний транскрипт гіпотетичного YouTube відео за посиланням {youtube_url}. Відео може бути про останні новини, технології, або економіку. Включи кілька ключових фраз."
-    mock_transcript = await call_gemini_api(prompt_for_mock_transcript, user_telegram_id=message.from_user.id)
+    # Use google_search to get a summary/transcript of the YouTube video
+    search_query = f"YouTube video summary {youtube_url}"
+    search_results = await asyncio.to_thread(google_search.search, queries=[search_query])
+    
+    transcript_context = []
+    for res_set in search_results:
+        for res in res_set.results:
+            if res.snippet:
+                transcript_context.append(res.snippet)
+    
+    context_text = "\n\n".join(transcript_context[:2]) # Use top 2 snippets for context
 
-    prompt = f"На основі цього транскрипту YouTube відео, згенеруй новину українською мовою, включаючи заголовок, короткий зміст та аналітику:\n\n{mock_transcript}"
+    prompt = f"На основі цієї інформації про YouTube відео, згенеруй новину українською мовою, включаючи заголовок, короткий зміст та аналітику. Інформація: {context_text}"
     ai_news_content = await call_gemini_api(prompt, user_telegram_id=message.from_user.id)
     
     title = ai_news_content.split('\n')[0] if ai_news_content and '\n' in ai_news_content else "YouTube Відео Новина"
@@ -1943,11 +1722,9 @@ async def process_filtered_channel_details(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'filtered_channel_creating', channel_name=channel_name, topics=', '.join(topics)))
     
-    # Store topics for user's filtered feed
     for topic in topics:
-        await add_user_subscription(user.id, topic) # Reusing subscription logic for filtered channels
+        await add_user_subscription(user.id, topic)
 
-    # Inform user about manual channel creation and bot's role
     await message.answer(get_message(user_lang, 'filtered_channel_created', channel_name=channel_name), reply_markup=get_ai_media_menu_keyboard(user_lang))
     await state.clear()
 
@@ -1967,7 +1744,6 @@ async def process_ai_media_name(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'ai_media_creating'))
     
-    # Simulate creation of AI media (AI texts, publication channels, analytics, digests)
     mock_media_description = f"Ваше AI-медіа '{media_name}' тепер генерує AI-тексти, публікує їх у власному каналі, надає аналітику та щоденні дайджести."
     
     await message.answer(get_message(user_lang, 'ai_media_created', media_name=media_name) + f"\n\n{mock_media_description}", reply_markup=get_ai_media_menu_keyboard(user_lang))
@@ -1986,7 +1762,6 @@ async def handle_infographics(callback: CallbackQuery):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'infographics_generating'))
     
-    # Use google_search to get recent data trends for infographics
     search_queries = [
         "latest global economic data trends",
         "recent technology adoption rates",
@@ -2016,7 +1791,6 @@ async def handle_trust_index(callback: CallbackQuery):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'trust_index_calculating'))
     
-    # Simulate trust index calculation based on recent news and common knowledge
     search_queries = [
         "fact-checking news sources reputation",
         "media bias ratings",
@@ -2045,7 +1819,6 @@ async def handle_long_term_connections(callback: CallbackQuery):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'long_term_connections_generating'))
     
-    # Use google_search for historical context
     search_queries = [
         "historical events influencing current economy",
         "long term political trends Ukraine",
@@ -2074,7 +1847,6 @@ async def handle_ai_prediction(callback: CallbackQuery):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_prediction_generating'))
     
-    # Use google_search for recent news to base prediction on
     search_queries = [
         "future of AI development predictions",
         "global economic forecasts next 5 years",
