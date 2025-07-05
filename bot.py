@@ -5,13 +5,14 @@ import json
 import os
 from typing import List, Optional, Dict, Any, Union
 import random
+import io # Для роботи з аудіо в пам'яті
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold, hlink
 from aiogram.client.default import DefaultBotProperties
@@ -25,7 +26,7 @@ from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS
+from gtts import gTTS # Для генерації голосових повідомлень
 from croniter import croniter
 
 # Імпортуємо парсери безпосередньо, оскільки вони знаходяться в тій же директорії
@@ -130,7 +131,7 @@ class Source(BaseModel):
     source_url: HttpUrl
     source_type: str
     status: str = 'active'
-    added_at: Optional[datetime] = None
+    added_at: Optional[datetime] = None # Включено added_at в модель Pydantic
     last_parsed: Optional[datetime] = None
     parse_frequency: str = 'hourly'
 
@@ -319,7 +320,7 @@ async def get_source_by_id(source_id: int):
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             # Змінено: використовуємо source_name та source_url
-            await cur.execute("SELECT id, source_name, source_url, source_type, status FROM sources WHERE id = %s", (source_id,))
+            await cur.execute("SELECT id, source_name, source_url, source_type, status, added_at FROM sources WHERE id = %s", (source_id,))
             return await cur.fetchone()
 
 # FSM States
@@ -344,8 +345,9 @@ class AIAssistant(StatesGroup):
     waiting_for_what_if_query = State()
     what_if_news_id = State()
     waiting_for_youtube_interview_url = State()
+    waiting_for_translate_language = State() # Новий стан для вибору мови перекладу
+    waiting_for_free_question = State() # NEW: State for general AI chat
 
-# Додано новий стан для грошового аналізу
 class MonetaryImpactAnalysis(StatesGroup):
     waiting_for_monetary_impact_news_id = State()
 
@@ -359,6 +361,10 @@ class FilterSetup(StatesGroup):
 class LanguageSelection(StatesGroup):
     waiting_for_language = State()
 
+class ModerationStates(StatesGroup): # NEW: State for moderation
+    browsing_pending_news = State()
+
+
 # Inline Keyboards
 def get_main_menu_keyboard():
     builder = InlineKeyboardBuilder()
@@ -367,7 +373,8 @@ def get_main_menu_keyboard():
         InlineKeyboardButton(text="➕ Додати джерело", callback_data="add_source")
     )
     builder.row(
-        InlineKeyboardButton(text="⚙️ Налаштування", callback_data="settings_menu")
+        InlineKeyboardButton(text="⚙️ Налаштування", callback_data="settings_menu"),
+        InlineKeyboardButton(text="💬 Запитай AI", callback_data="ask_free_ai") # NEW: AI chat button
     )
     builder.row(
         InlineKeyboardButton(text="❓ Допомога", callback_data="help_menu"),
@@ -387,7 +394,7 @@ def get_ai_news_functions_keyboard(news_id: int, page: int = 0):
     if page == 0:
         builder.row(
             InlineKeyboardButton(text="📝 AI-резюме", callback_data=f"ai_summary_{news_id}"),
-            InlineKeyboardButton(text="🌐 Перекласти", callback_data=f"translate_{news_id}")
+            InlineKeyboardButton(text="🌐 Перекласти", callback_data=f"translate_select_lang_{news_id}") # Змінено callback
         )
         builder.row(
             InlineKeyboardButton(text="❓ Запитати AI", callback_data=f"ask_news_ai_{news_id}"),
@@ -396,6 +403,9 @@ def get_ai_news_functions_keyboard(news_id: int, page: int = 0):
         builder.row(
             InlineKeyboardButton(text="❓ Пояснити термін", callback_data=f"explain_term_{news_id}"),
             InlineKeyboardButton(text="🏷️ Класифікувати за темами", callback_data=f"classify_topics_{news_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔊 Прослухати новину", callback_data=f"listen_news_{news_id}") # NEW: Listen to news button
         )
         builder.row(
             InlineKeyboardButton(text="➡️ Далі (AI функції)", callback_data=f"ai_functions_page_1_{news_id}")
@@ -425,7 +435,30 @@ def get_ai_news_functions_keyboard(news_id: int, page: int = 0):
         InlineKeyboardButton(text="🚩 Повідомити про фейк", callback_data=f"report_fake_news_{news_id}")
     )
     builder.row(
+        InlineKeyboardButton(text="❤️ В обране", callback_data=f"bookmark_news_add_{news_id}"), # Нова кнопка
+        InlineKeyboardButton(text="💬 Коментарі", callback_data=f"view_comments_{news_id}") # Нова кнопка
+    )
+    builder.row(
         InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu")
+    )
+    return builder.as_markup()
+
+def get_translate_language_keyboard(news_id: int):
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🇬🇧 Англійська", callback_data=f"translate_to_en_{news_id}"),
+        InlineKeyboardButton(text="🇵🇱 Польська", callback_data=f"translate_to_pl_{news_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🇩🇪 Німецька", callback_data=f"translate_to_de_{news_id}"),
+        InlineKeyboardButton(text="🇪🇸 Іспанська", callback_data=f"translate_to_es_{news_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🇫🇷 Французька", callback_data=f"translate_to_fr_{news_id}"),
+        InlineKeyboardButton(text="🇺🇦 Українська", callback_data=f"translate_to_uk_{news_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад до AI функцій", callback_data=f"ai_news_functions_menu_{news_id}")
     )
     return builder.as_markup()
 
@@ -466,6 +499,12 @@ async def command_start_handler(message: Message, state: FSMContext):
     logger.info(f"Отримано команду /start від користувача {message.from_user.id}")
     await state.clear()
     user = await create_or_update_user(message.from_user) # Переконаємося, що користувач існує
+    
+    # Обробка інвайт-коду, якщо він є
+    if message.text and len(message.text.split()) > 1:
+        invite_code = message.text.split()[1]
+        await handle_invite_code(user.id, invite_code) # Передаємо user.id (з БД)
+    
     await message.answer(f"Привіт, {message.from_user.first_name}! Я ваш AI News Bot. Оберіть дію:", reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("menu"))
@@ -480,6 +519,7 @@ async def command_cancel_handler(message: Message, state: FSMContext):
     logger.info(f"Отримано команду /cancel від користувача {message.from_user.id}")
     await state.clear()
     await message.answer("Дію скасовано. Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+    await callback.answer() # Додано для коректної обробки callback
 
 @router.message(Command("test")) # Нова команда для тестування відгуку бота
 async def command_test_handler(message: Message):
@@ -736,6 +776,7 @@ async def handle_ai_functions_pagination(callback: CallbackQuery, state: FSMCont
     user_telegram_id = callback.from_user.id
     user_in_db = await get_user_by_telegram_id(user_telegram_id)
 
+    # Перевірка преміум доступу для сторінки 1
     if page == 1 and (not user_in_db or not user_in_db.is_premium):
         await callback.answer("Ці функції доступні лише для преміум-користувачів.", show_alert=True)
         return
@@ -877,19 +918,78 @@ async def handle_ai_summary(callback: CallbackQuery):
     await callback.message.edit_text(f"<b>AI-резюме:</b>\n{summary}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("translate_"))
-async def handle_translate(callback: CallbackQuery):
-    logger.info(f"Отримано callback 'translate_' від користувача {callback.from_user.id}")
-    news_id = int(callback.data.split('_')[1])
+@router.callback_query(F.data.startswith("translate_select_lang_"))
+async def handle_translate_select_language(callback: CallbackQuery, state: FSMContext):
+    logger.info(f"Отримано callback 'translate_select_lang_' від користувача {callback.from_user.id}")
+    news_id = int(callback.data.split('_')[3])
+    await state.update_data(news_id_for_translate=news_id)
+    await callback.message.edit_text("Оберіть мову для перекладу:", reply_markup=get_translate_language_keyboard(news_id))
+    await state.set_state(AIAssistant.waiting_for_translate_language)
+    await callback.answer()
+
+@router.callback_query(AIAssistant.waiting_for_translate_language, F.data.startswith("translate_to_"))
+async def handle_translate_to_language(callback: CallbackQuery, state: FSMContext):
+    logger.info(f"Отримано callback 'translate_to_' від користувача {callback.from_user.id}")
+    parts = callback.data.split('_')
+    lang_code = parts[2] # наприклад, 'en', 'pl'
+    news_id = int(parts[3])
+
+    language_names = {
+        "en": "англійську", "pl": "польську", "de": "німецьку",
+        "es": "іспанську", "fr": "французьку", "uk": "українську"
+    }
+    language_name = language_names.get(lang_code, "обрану")
+
+    news_item = await get_news_by_id(news_id)
+    if not news_item:
+        await callback.answer("Новина не знайдена.", show_alert=True)
+        await state.clear()
+        return
+
+    await callback.message.edit_text(f"Перекладаю новину на {language_name} мову, зачекайте...")
+    translation = await call_gemini_api(f"Переклади цю новину на {language_name} мовою:\n\n{news_item.content}")
+    await callback.message.edit_text(f"<b>Переклад на {language_name} мову:</b>\n{translation}", reply_markup=get_ai_news_functions_keyboard(news_id))
+    await state.clear()
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("listen_news_"))
+async def handle_listen_news(callback: CallbackQuery):
+    logger.info(f"Отримано callback 'listen_news_' від користувача {callback.from_user.id}")
+    news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     if not news_item:
         await callback.answer("Новина не знайдена.", show_alert=True)
         return
 
-    await callback.message.edit_text("Перекладаю новину, зачекайте...")
-    translation = await call_gemini_api(f"Переклади новину українською мовою: {news_item.content}")
-    await callback.message.edit_text(f"<b>Переклад:</b>\n{translation}", reply_markup=get_ai_news_functions_keyboard(news_id))
+    await callback.message.edit_text("Генерую аудіо, зачекайте...")
+    
+    try:
+        # Combine title and content for TTS
+        text_to_speak = f"{news_item.title}. {news_item.content}"
+        
+        # gTTS supports Ukrainian ('uk')
+        tts = gTTS(text=text_to_speak, lang='uk')
+        
+        # Save to a BytesIO object (in-memory file)
+        audio_buffer = io.BytesIO()
+        await asyncio.to_thread(tts.write_to_fp, audio_buffer)
+        audio_buffer.seek(0) # Reset buffer position to the beginning
+
+        # Send the audio as a voice message
+        await bot.send_voice(
+            chat_id=callback.message.chat.id,
+            voice=BufferedInputFile(audio_buffer.getvalue(), filename=f"news_{news_id}.mp3"),
+            caption=f"🔊 Новина: {news_item.title}",
+            reply_markup=get_ai_news_functions_keyboard(news_id)
+        )
+        await callback.message.delete() # Delete the "Generating audio..." message
+        logger.info(f"Аудіо для новини {news_id} успішно надіслано користувачу {callback.from_user.id}.")
+    except Exception as e:
+        logger.error(f"Помилка генерації або надсилання аудіо для новини {news_id}: {e}", exc_info=True)
+        await callback.message.edit_text("Виникла помилка при генерації аудіо. Будь ласка, спробуйте пізніше.",
+                                         reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("ask_news_ai_"))
 async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
@@ -902,7 +1002,7 @@ async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_question)
 async def process_ai_question(message: Message, state: FSMContext):
-    logger.info(f"Отримано запитання AI від користувача {message.from_user.id}")
+    logger.info(f"Отримано запитання AI від користувача {message.from_user.id}: {message.text}")
     user_question = message.text
     user_data = await state.get_data()
     news_id = user_data.get("waiting_for_news_id_for_ai") # Оновлено назву
@@ -926,6 +1026,29 @@ async def process_ai_question(message: Message, state: FSMContext):
     await message.answer(f"<b>Відповідь AI:</b>\n{ai_response}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await state.clear()
     logger.info(f"Відповідь AI надіслана користувачу {message.from_user.id} для новини {news_id}.")
+
+# NEW: Handler for general AI chat
+@router.callback_query(F.data == "ask_free_ai")
+async def handle_ask_free_ai(callback: CallbackQuery, state: FSMContext):
+    logger.info(f"Отримано callback 'ask_free_ai' від користувача {callback.from_user.id}")
+    await callback.message.edit_text("Надішліть ваше запитання до AI (наприклад, 'Що сталося з гривнею?', 'Як це вплине на ціни?'):",
+                                     reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Скасувати", callback_data="cancel_action")).as_markup())
+    await state.set_state(AIAssistant.waiting_for_free_question)
+    await callback.answer()
+
+@router.message(AIAssistant.waiting_for_free_question)
+async def process_free_ai_question(message: Message, state: FSMContext):
+    logger.info(f"Отримано вільне запитання AI від користувача {message.from_user.id}: {message.text}")
+    user_question = message.text
+
+    await message.answer("Обробляю ваше запитання, зачекайте...")
+    # Тут можна додати контекст, наприклад, останні новини, які читав користувач
+    # Для простоти, поки що просто передаємо запитання
+    ai_response = await call_gemini_api(f"Відповідай як новинний аналітик на запитання: {user_question}")
+    await message.answer(f"<b>Відповідь AI:</b>\n{ai_response}", reply_markup=get_main_menu_keyboard())
+    await state.clear()
+    logger.info(f"Вільна відповідь AI надіслана користувачу {message.from_user.id}.")
+
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
@@ -1145,6 +1268,109 @@ async def handle_monetary_impact(callback: CallbackQuery):
     await callback.message.edit_text(f"<b>Грошовий аналіз:</b>\n{monetary_analysis}", reply_markup=get_ai_news_functions_keyboard(news_id))
     await callback.answer()
 
+# Нові обробники для закладок (bookmarks)
+@router.callback_query(F.data.startswith("bookmark_news_"))
+async def handle_bookmark_news(callback: CallbackQuery):
+    logger.info(f"Отримано callback 'bookmark_news_' від користувача {callback.from_user.id}")
+    parts = callback.data.split('_')
+    action = parts[2] # 'add' або 'remove'
+    news_id = int(parts[3])
+
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    if not user:
+        await callback.answer("Помилка: користувач не знайдений.", show_alert=True)
+        return
+
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            if action == 'add':
+                try:
+                    await cur.execute(
+                        """
+                        INSERT INTO bookmarks (user_id, news_id, bookmarked_at)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id, news_id) DO NOTHING;
+                        """,
+                        (user.id, news_id)
+                    )
+                    if cur.rowcount > 0:
+                        await callback.answer("Новину додано до закладок!", show_alert=True)
+                        logger.info(f"Новину {news_id} додано до закладок користувачем {user.id}")
+                    else:
+                        await callback.answer("Ця новина вже у ваших закладках.", show_alert=True)
+                except Exception as e:
+                    logger.error(f"Помилка додавання закладки: {e}", exc_info=True)
+                    await callback.answer("Помилка при додаванні до закладок.", show_alert=True)
+            elif action == 'remove':
+                try:
+                    await cur.execute(
+                        "DELETE FROM bookmarks WHERE user_id = %s AND news_id = %s;",
+                        (user.id, news_id)
+                    )
+                    if cur.rowcount > 0:
+                        await callback.answer("Новину видалено із закладок!", show_alert=True)
+                        logger.info(f"Новину {news_id} видалено із закладок користувачем {user.id}")
+                    else:
+                        await callback.answer("Цієї новини немає у ваших закладках.", show_alert=True)
+                except Exception as e:
+                    logger.error(f"Помилка видалення закладки: {e}", exc_info=True)
+                    await callback.answer("Помилка при видаленні із закладок.", show_alert=True)
+            await conn.commit()
+    
+    # Оновлюємо клавіатуру, щоб відобразити актуальний статус закладки
+    # Для цього потрібно отримати новину знову і перерендерити меню AI функцій
+    current_state_data = await state.get_data()
+    last_message_id = current_state_data.get('last_message_id')
+    if last_message_id:
+        # Можна відредагувати повідомлення, щоб оновити кнопки
+        # Але для простоти зараз просто повертаємось до меню AI-функцій
+        await callback.message.edit_text("Оберіть AI-функцію:", reply_markup=get_ai_news_functions_keyboard(news_id))
+    else:
+        await callback.message.edit_text("Дію виконано. Оберіть наступну дію:", reply_markup=get_main_menu_keyboard())
+    await callback.answer()
+
+@router.message(Command("bookmarks"))
+async def command_bookmarks_handler(message: Message, state: FSMContext):
+    logger.info(f"Отримано команду /bookmarks від користувача {message.from_user.id}")
+    user = await get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        user = await create_or_update_user(message.from_user)
+
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT n.* FROM news n
+                JOIN bookmarks b ON n.id = b.news_id
+                WHERE b.user_id = %s
+                ORDER BY b.bookmarked_at DESC
+                LIMIT 10;
+                """,
+                (user.id,)
+            )
+            bookmarked_news = await cur.fetchall()
+            
+    if not bookmarked_news:
+        await message.answer("У вас поки немає закладок.", reply_markup=get_main_menu_keyboard())
+        return
+
+    # Відправляємо кожну новину окремо або формуємо список
+    response_text = "<b>Ваші закладки:</b>\n\n"
+    for idx, news_item_data in enumerate(bookmarked_news):
+        news_item = News(**news_item_data)
+        response_text += f"{idx+1}. <a href='{news_item.source_url}'>{news_item.title}</a>\n"
+        response_text += f"   <i>{news_item.published_at.strftime('%d.%m.%Y %H:%M')}</i>\n\n"
+    
+    # Додаємо кнопку для перегляду закладок з можливістю видалення
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu"))
+    # Можна додати кнопки для перегляду/видалення конкретних закладок, якщо список великий
+    
+    await message.answer(response_text, reply_markup=builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    logger.info(f"Надіслано закладки користувачу {user.id}")
+
 
 @router.callback_query(F.data.startswith("report_fake_news_"))
 async def handle_report_fake_news(callback: CallbackQuery):
@@ -1162,6 +1388,15 @@ async def handle_report_fake_news(callback: CallbackQuery):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
+            # Перевірка на дублікат репорту
+            await cur.execute(
+                "SELECT 1 FROM reports WHERE user_id = %s AND target_type = 'news' AND target_id = %s;",
+                (user_db_id, news_id)
+            )
+            if await cur.fetchone():
+                await callback.answer("Ви вже надсилали репорт на цю новину.", show_alert=True)
+                return
+
             await cur.execute(
                 """
                 INSERT INTO reports (user_id, target_type, target_id, reason, created_at, status)
@@ -1182,17 +1417,20 @@ async def send_news_to_channel(news_item: News):
         logger.warning("NEWS_CHANNEL_LINK не налаштовано. Новина не буде опублікована в каналі.")
         return
 
-    # Витягуємо channel_id або username з посилання
     channel_identifier = NEWS_CHANNEL_LINK
     if 't.me/' in NEWS_CHANNEL_LINK:
         channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
     
-    # Перевіряємо, чи це посилання-запрошення (починається з '+')
-    if channel_identifier.startswith('+'):
+    # Check if it's a numeric channel ID (starts with -100)
+    # and ensure it's purely numeric after the initial '-'
+    if channel_identifier.startswith('-100') and channel_identifier[1:].isdigit():
+        # It's a numeric ID, use as is
+        pass
+    elif channel_identifier.startswith('+'):
         logger.error(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' виглядає як посилання-запрошення. Для публікації потрібен @username каналу або його числовий ID (наприклад, -1001234567890).")
         return
-    elif not channel_identifier.startswith('@') and not channel_identifier.startswith('-'):
-        # Якщо це не @username і не числовий ID, спробуємо додати @
+    elif not channel_identifier.startswith('@'):
+        # If it's not a numeric ID and not starting with @, assume it's a username and prepend @
         channel_identifier = '@' + channel_identifier
         logger.warning(f"NEWS_CHANNEL_LINK '{NEWS_CHANNEL_LINK}' не містить '@' або '-' на початку. Спробую використати '{channel_identifier}'.")
 
@@ -1280,6 +1518,8 @@ async def fetch_and_post_news_task():
                     logger.info(f"Новина '{added_news_item.title}' успішно додана до БД.")
                     # Send to news channel if successfully added and approved (which it should be for auto-parsed)
                     await send_news_to_channel(added_news_item)
+                    # Оновлення статистики джерела
+                    await update_source_stats_publication_count(source['id'])
                 else:
                     logger.info(f"Новина з джерела {source['source_name']} не була додана до БД (можливо, вже існує).")
                 
@@ -1308,7 +1548,371 @@ async def delete_expired_news_task():
                 logger.info(f"Видалено {deleted_count} прострочених новин.")
             else:
                 logger.info("Немає прострочених новин для видалення.")
+
+# NEW: Function to send daily digest
+async def send_daily_digest():
+    logger.info("Запущено фонове завдання: send_daily_digest")
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Отримуємо користувачів, які хочуть щоденний дайджест
+            # Перевіряємо, що auto_notifications увімкнено
+            await cur.execute("SELECT id, telegram_id, language FROM users WHERE auto_notifications = TRUE AND digest_frequency = 'daily';")
+            users_for_digest = await cur.fetchall()
+
+    if not users_for_digest:
+        logger.info("Немає користувачів для щоденного дайджесту.")
+        return
+
+    for user_data in users_for_digest:
+        user_db_id = user_data['id']
+        user_telegram_id = user_data['telegram_id']
+        user_lang = user_data['language']
+
+        logger.info(f"Надсилаю щоденний дайджест користувачу {user_telegram_id}")
+
+        # Отримуємо 3-5 новин, які користувач ще не бачив
+        news_items = await get_news_for_user(user_db_id, limit=5)
+
+        if not news_items:
+            logger.info(f"Для користувача {user_telegram_id} немає нових новин для дайджесту.")
+            continue
+
+        digest_text = "<b>📰 Ваш щоденний AI-дайджест новин:</b>\n\n"
+        for i, news_item in enumerate(news_items):
+            summary = await call_gemini_api(f"Зроби коротке резюме новини українською мовою: {news_item.content}")
+            digest_text += (
+                f"<b>{i+1}. {news_item.title}</b>\n"
+                f"{summary}\n"
+                f"🔗 <a href='{news_item.source_url}'>Читати повністю</a>\n\n"
+            )
+            # Позначаємо новину як переглянуту після додавання до дайджесту
+            await mark_news_as_viewed(user_db_id, news_item.id)
+
+        try:
+            await bot.send_message(
+                chat_id=user_telegram_id,
+                text=digest_text,
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            logger.info(f"Щоденний дайджест успішно надіслано користувачу {user_telegram_id}.")
+        except Exception as e:
+            logger.error(f"Помилка надсилання дайджесту користувачу {user_telegram_id}: {e}", exc_info=True)
+
+
+# Функції для роботи з запрошеннями
+async def generate_invite_code() -> str:
+    return ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=8))
+
+async def create_invite(inviter_user_db_id: int) -> Optional[str]:
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            invite_code = await generate_invite_code()
+            try:
+                await cur.execute(
+                    """
+                    INSERT INTO invitations (inviter_user_id, invite_code, created_at, status)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, 'pending')
+                    RETURNING invite_code;
+                    """,
+                    (inviter_user_db_id, invite_code)
+                )
+                await conn.commit()
+                return invite_code
+            except Exception as e:
+                logger.error(f"Помилка створення запрошення для користувача {inviter_user_db_id}: {e}")
+                return None
+
+async def handle_invite_code(new_user_db_id: int, invite_code: str):
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT id, inviter_user_id FROM invitations
+                WHERE invite_code = %s AND status = 'pending' AND used_at IS NULL;
+                """,
+                (invite_code,)
+            )
+            invite_record = await cur.fetchone()
+
+            if invite_record:
+                invite_id, inviter_user_db_id = invite_record
+                await cur.execute(
+                    """
+                    UPDATE invitations SET
+                        used_at = CURRENT_TIMESTAMP,
+                        status = 'accepted',
+                        invitee_telegram_id = %s -- Зберігаємо Telegram ID нового користувача
+                    WHERE id = %s;
+                    """,
+                    (new_user_db_id, invite_id)
+                )
+                await cur.execute(
+                    "UPDATE users SET inviter_id = %s WHERE id = %s;",
+                    (inviter_user_db_id, new_user_db_id)
+                )
+                # Тут можна додати логіку нагородження запрошувача, наприклад, преміум-статус
+                # await cur.execute("UPDATE users SET is_premium = TRUE, premium_expires_at = NOW() + INTERVAL '30 days' WHERE id = %s;", (inviter_user_db_id,))
+                logger.info(f"Запрошення {invite_code} використано користувачем {new_user_db_id}. Запрошувач: {inviter_user_db_id}")
+                await conn.commit()
+            else:
+                logger.warning(f"Недійсний або використаний інвайт-код: {invite_code} для користувача {new_user_db_id}")
+
+@router.message(Command("invite"))
+async def command_invite_handler(message: Message):
+    logger.info(f"Отримано команду /invite від користувача {message.from_user.id}")
+    user = await get_user_by_telegram_id(message.from_user.id)
+    if not user:
+        user = await create_or_update_user(message.from_user)
     
+    invite_code = await create_invite(user.id)
+    if invite_code:
+        invite_link = f"https://t.me/{bot.me.username}?start={invite_code}"
+        await message.answer(f"Ваш персональний інвайт-код: <code>{invite_code}</code>\n"
+                             f"Поділіться цим посиланням, щоб запросити друзів: {hlink('Посилання для запрошення', invite_link)}",
+                             parse_mode=ParseMode.HTML, disable_web_page_preview=False)
+    else:
+        await message.answer("Не вдалося згенерувати інвайт-код. Спробуйте пізніше.")
+
+
+# Функції для статистики джерел
+async def update_source_stats_publication_count(source_id: int):
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO source_stats (source_id, publication_count, last_updated)
+                VALUES (%s, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT (source_id) DO UPDATE SET
+                    publication_count = source_stats.publication_count + 1,
+                    last_updated = CURRENT_TIMESTAMP;
+                """,
+                (source_id,)
+            )
+            await conn.commit()
+            logger.info(f"Оновлено статистику публікацій для джерела {source_id}")
+
+@router.callback_query(F.data == "source_stats_menu") # Припустимо, що це буде кнопка в меню
+async def handle_source_stats_menu(callback: CallbackQuery):
+    logger.info(f"Отримано callback 'source_stats_menu' від користувача {callback.from_user.id}")
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT s.source_name, ss.publication_count
+                FROM source_stats ss
+                JOIN sources s ON ss.source_id = s.id
+                ORDER BY ss.publication_count DESC
+                LIMIT 10;
+                """
+            )
+            stats = await cur.fetchall()
+    
+    if not stats:
+        await callback.message.edit_text("Статистика джерел відсутня.", reply_markup=get_main_menu_keyboard())
+        await callback.answer()
+        return
+
+    response_text = "<b>📊 Статистика джерел (топ-10 за публікаціями):</b>\n\n"
+    for idx, stat in enumerate(stats):
+        response_text += f"{idx+1}. {stat['source_name']}: {stat['publication_count']} публікацій\n"
+    
+    await callback.message.edit_text(response_text, reply_markup=get_main_menu_keyboard(), parse_mode=ParseMode.HTML)
+    await callback.answer()
+
+# NEW: Admin commands
+@router.message(Command("moderation"))
+async def command_moderation_handler(message: Message, state: FSMContext):
+    user = await get_user_by_telegram_id(message.from_user.id)
+    if not user or not user.is_admin:
+        await message.answer("У вас немає доступу до цієї команди.", reply_markup=get_main_menu_keyboard())
+        return
+
+    logger.info(f"Адміністратор {message.from_user.id} викликав команду /moderation.")
+    await message.answer("Завантажую новини на модерацію, зачекайте...")
+
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT id FROM news WHERE moderation_status = 'pending' ORDER BY published_at ASC;")
+            pending_news_ids = [row['id'] for row in await cur.fetchall()]
+
+    if not pending_news_ids:
+        await message.answer("Немає новин на модерації.", reply_markup=get_main_menu_keyboard())
+        await state.clear()
+        return
+
+    await state.update_data(moderation_news_ids=pending_news_ids, current_moderation_index=0)
+    await state.set_state(ModerationStates.browsing_pending_news)
+
+    await send_moderation_news_to_admin(message.chat.id, pending_news_ids[0], 0, len(pending_news_ids))
+
+
+async def send_moderation_news_to_admin(chat_id: int, news_id: int, current_index: int, total_news: int):
+    news_item = await get_news_by_id(news_id)
+    if not news_item:
+        logger.warning(f"Новина {news_id} не знайдена для модерації.")
+        await bot.send_message(chat_id, "На жаль, ця новина не знайдена для модерації.")
+        return
+
+    source_info = await get_source_by_id(news_item.source_id)
+    source_name = source_info['source_name'] if source_info else "Невідоме джерело"
+
+    text = (
+        f"<b>Новина на модерації ({current_index + 1} з {total_news}):</b>\n\n"
+        f"<b>Заголовок:</b> {news_item.title}\n\n"
+        f"<b>Зміст:</b>\n{news_item.content}\n\n"
+        f"Джерело: {source_name} ({news_item.source_url})\n"
+        f"Опубліковано: {news_item.published_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"Статус: {news_item.moderation_status}"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Схвалити", callback_data=f"moderate_news_approve_{news_item.id}"),
+        InlineKeyboardButton(text="❌ Відхилити", callback_data=f"moderate_news_reject_{news_item.id}")
+    )
+    
+    nav_buttons = []
+    if current_index > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Попередня", callback_data="moderation_prev_news"))
+    if current_index < total_news - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Наступна", callback_data="moderation_next_news"))
+    
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
+    builder.row(InlineKeyboardButton(text="⬅️ До головного меню", callback_data="main_menu"))
+
+    if news_item.image_url:
+        try:
+            await bot.send_photo(
+                chat_id=chat_id,
+                photo=str(news_item.image_url),
+                caption=text,
+                reply_markup=builder.as_markup(),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.warning(f"Не вдалося надіслати фото для новини {news_id} для модерації: {e}. Надсилаю новину без фото.")
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text + f"\n[Зображення новини]({news_item.image_url})",
+                reply_markup=builder.as_markup(),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False
+            )
+    else:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=builder.as_markup(),
+            parse_mode=ParseMode.HTML
+        )
+
+@router.callback_query(ModerationStates.browsing_pending_news, F.data.startswith("moderate_news_"))
+async def handle_moderation_action(callback: CallbackQuery, state: FSMContext):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    if not user or not user.is_admin:
+        await callback.answer("У вас немає доступу до цієї дії.", show_alert=True)
+        return
+
+    parts = callback.data.split('_')
+    action = parts[2] # 'approve' or 'reject'
+    news_id = int(parts[3])
+
+    pool = await get_db_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            new_status = 'approved' if action == 'approve' else 'rejected'
+            await cur.execute(
+                "UPDATE news SET moderation_status = %s WHERE id = %s RETURNING *;",
+                (new_status, news_id)
+            )
+            updated_news = await cur.fetchone()
+            await conn.commit()
+
+            if updated_news:
+                await callback.answer(f"Новину {news_id} {new_status}!", show_alert=True)
+                logger.info(f"Новину {news_id} {new_status} адміністратором {user.telegram_id}.")
+                
+                # Якщо новина схвалена, відправляємо її в канал
+                if new_status == 'approved':
+                    await send_news_to_channel(News(**updated_news))
+
+                # Видаляємо новину з поточного списку модерації
+                user_data = await state.get_data()
+                pending_news_ids = user_data.get("moderation_news_ids", [])
+                current_index = user_data.get("current_moderation_index", 0)
+
+                if news_id in pending_news_ids:
+                    pending_news_ids.remove(news_id)
+                    await state.update_data(moderation_news_ids=pending_news_ids)
+
+                # Переходимо до наступної новини або завершуємо модерацію
+                if pending_news_ids:
+                    # Якщо поточний індекс вийшов за межі нового списку, ставимо його на останній елемент
+                    if current_index >= len(pending_news_ids):
+                        current_index = len(pending_news_ids) - 1
+                    
+                    await state.update_data(current_moderation_index=current_index)
+                    await callback.message.delete() # Видаляємо попереднє повідомлення з новиною
+                    await send_moderation_news_to_admin(callback.message.chat.id, pending_news_ids[current_index], current_index, len(pending_news_ids))
+                else:
+                    await callback.message.edit_text("Усі новини на модерації оброблено.", reply_markup=get_main_menu_keyboard())
+                    await state.clear()
+            else:
+                await callback.answer("Помилка: новина не знайдена.", show_alert=True)
+    await callback.answer()
+
+@router.callback_query(ModerationStates.browsing_pending_news, F.data == "moderation_next_news")
+async def handle_moderation_next_news(callback: CallbackQuery, state: FSMContext):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    if not user or not user.is_admin:
+        await callback.answer("У вас немає доступу до цієї дії.", show_alert=True)
+        return
+
+    user_data = await state.get_data()
+    pending_news_ids = user_data.get("moderation_news_ids", [])
+    current_index = user_data.get("current_moderation_index", 0)
+
+    if not pending_news_ids or current_index + 1 >= len(pending_news_ids):
+        await callback.answer("Більше новин на модерації немає.", show_alert=True)
+        return
+
+    next_index = current_index + 1
+    await state.update_data(current_moderation_index=next_index)
+    await callback.message.delete() # Видаляємо попереднє повідомлення
+    await send_moderation_news_to_admin(callback.message.chat.id, pending_news_ids[next_index], next_index, len(pending_news_ids))
+    await callback.answer()
+
+@router.callback_query(ModerationStates.browsing_pending_news, F.data == "moderation_prev_news")
+async def handle_moderation_prev_news(callback: CallbackQuery, state: FSMContext):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    if not user or not user.is_admin:
+        await callback.answer("У вас немає доступу до цієї дії.", show_alert=True)
+        return
+
+    user_data = await state.get_data()
+    pending_news_ids = user_data.get("moderation_news_ids", [])
+    current_index = user_data.get("current_moderation_index", 0)
+
+    if not pending_news_ids or current_index <= 0:
+        await callback.answer("Це перша новина на модерації.", show_alert=True)
+        return
+
+    prev_index = current_index - 1
+    await state.update_data(current_moderation_index=prev_index)
+    await callback.message.delete() # Видаляємо попереднє повідомлення
+    await send_moderation_news_to_admin(callback.message.chat.id, pending_news_ids[prev_index], prev_index, len(pending_news_ids))
+    await callback.answer()
+
 # Планувальник завдань
 async def scheduler():
     # Плануємо наступні запуски
@@ -1316,6 +1920,8 @@ async def scheduler():
     fetch_schedule_expression = '*/5 * * * *'
     # Розклад для delete_expired_news_task: кожні 5 годин (наприклад, о 0, 5, 10, 15, 20 годинах)
     delete_schedule_expression = '0 */5 * * *' 
+    # Розклад для щоденного дайджесту (наприклад, о 9:00 UTC щодня)
+    daily_digest_schedule_expression = '0 9 * * *'
     
     while True:
         now = datetime.now(timezone.utc)
@@ -1330,11 +1936,17 @@ async def scheduler():
         next_delete_run = delete_itr.get_next(datetime)
         delete_delay_seconds = (next_delete_run - now).total_seconds()
 
+        # Планування send_daily_digest
+        daily_digest_itr = croniter(daily_digest_schedule_expression, now)
+        next_daily_digest_run = daily_digest_itr.get_next(datetime)
+        daily_digest_delay_seconds = (next_daily_digest_run - now).total_seconds()
+
         # Обираємо найменшу затримку до наступного запуску
-        min_delay = min(fetch_delay_seconds, delete_delay_seconds)
+        min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds)
         
         logger.info(f"Наступний запуск fetch_and_post_news_task через {int(fetch_delay_seconds)} секунд.")
         logger.info(f"Наступний запуск delete_expired_news_task через {int(delete_delay_seconds)} секунд.")
+        logger.info(f"Наступний запуск send_daily_digest через {int(daily_digest_delay_seconds)} секунд.")
         logger.info(f"Бот засинає на {int(min_delay)} секунд.")
 
         await asyncio.sleep(min_delay)
@@ -1347,12 +1959,13 @@ async def scheduler():
             await fetch_and_post_news_task()
         if (current_utc_time - next_delete_run).total_seconds() >= -1:
             await delete_expired_news_task()
+        if (current_utc_time - next_daily_digest_run).total_seconds() >= -1:
+            await send_daily_digest()
 
 
 # FastAPI endpoints
 @app.on_event("startup")
 async def on_startup():
-    # check_and_create_tables() ВИДАЛЕНО - схема застосовується через start.sh
     # Встановлення вебхука Telegram
     webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
@@ -1428,9 +2041,9 @@ async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offse
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            await cur.execute("SELECT id, telegram_id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency, safe_mode, current_feed_id, is_premium, premium_expires_at, level, badges, inviter_id, email, view_mode FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
             users = await cur.fetchall()
-            return users
+            return {"users": users} # Обгортаємо у словник для відповідності очікуванням JS на фронтенді
 
 @app.get("/reports", response_class=HTMLResponse)
 async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
@@ -1456,7 +2069,8 @@ async def get_admin_sources(api_key: str = Depends(get_api_key), limit: int = 10
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM sources ORDER BY added_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            # Включаємо added_at у запит
+            await cur.execute("SELECT id, user_id, source_name, source_url, source_type, status, added_at, last_parsed, parse_frequency FROM sources ORDER BY added_at DESC LIMIT %s OFFSET %s;", (limit, offset))
             sources = await cur.fetchall()
             return [Source(**s) for s in sources]
 
@@ -1472,7 +2086,7 @@ async def get_admin_stats(api_key: str = Depends(get_api_key)):
             await cur.execute("SELECT COUNT(*) AS total_news FROM news;")
             total_news = (await cur.fetchone())['total_news']
 
-            # Активні користувачі за останні 24 години
+            # Активні користувачі за останні 24 години (оновлено з 7 днів)
             await cur.execute("SELECT COUNT(DISTINCT telegram_id) AS active_users_count FROM users WHERE last_active >= NOW() - INTERVAL '24 hours';")
             active_users_count = (await cur.fetchone())['active_users_count']
 
@@ -1542,3 +2156,19 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
             if cur.rowcount == 0: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Новину не знайдено.")
             return
 
+# Додано для локального запуску Uvicorn
+if __name__ == "__main__":
+    import uvicorn
+    # Запускаємо вебхук у фоновому режимі, якщо WEBHOOK_URL не встановлено
+    # У продакшні WEBHOOK_URL буде встановлено через Render ENV
+    if not os.getenv("WEBHOOK_URL"):
+        # Для локального тестування, якщо не використовується ngrok/аналог
+        # Можна запустити polling для бота замість вебхука
+        # Або налаштувати ngrok і вказати WEBHOOK_URL
+        logger.info("WEBHOOK_URL не встановлено. Запускаю бота в режимі polling.")
+        async def start_polling():
+            await dp.start_polling(bot)
+        asyncio.run(start_polling())
+    
+    # Запускаємо FastAPI
+    uvicorn.run(app, host="0.0.0.0", port=8000)
