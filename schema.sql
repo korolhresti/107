@@ -73,8 +73,14 @@ CREATE TABLE IF NOT EXISTS news (
     ai_summary TEXT,
     ai_classified_topics JSONB,
     moderation_status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    expires_at TIMESTAMP WITH TIME ZONE -- Дата, після якої новина вважається неактуальною
+    expires_at TIMESTAMP WITH TIME ZONE, -- Дата, після якої новина вважається неактуальною
+    is_published_to_channel BOOLEAN DEFAULT FALSE -- NEW: Відстежує, чи була новина опублікована в Telegram-каналі
 );
+
+-- Додавання відсутнього стовпця до таблиці news
+DO $$ BEGIN
+    ALTER TABLE news ADD COLUMN IF NOT EXISTS is_published_to_channel BOOLEAN DEFAULT FALSE;
+END $$;
 
 -- Додавання/оновлення таблиці user_news_views
 CREATE TABLE IF NOT EXISTS user_news_views (
