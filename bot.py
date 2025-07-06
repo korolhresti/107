@@ -79,6 +79,11 @@ async def get_db_pool():
 
 app = FastAPI()
 
+# Ensure the 'static' directory exists
+if not os.path.exists("static"):
+    os.makedirs("static")
+    logger.info("Created 'static' directory.")
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class User(BaseModel):
@@ -403,7 +408,7 @@ async def check_ai_request_limit(user_id: int) -> bool:
     
     current_date = date.today()
     if user.ai_last_request_date != current_date:
-        await update_user(user_id, ai_requests_today=0, ai_last_request_date=current_date)
+        await update_user(user.id, ai_requests_today=0, ai_last_request_date=current_date)
         return True
     
     return user.ai_requests_today < MAX_AI_REQUESTS_PER_DAY
@@ -820,7 +825,7 @@ def get_settings_keyboard(lang: str, user: User) -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
-def get_language_keyboard() -> InlineKeyboardMarkup:
+def get_language_keyboard(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🇺🇦 Українська", callback_data="set_lang_uk")
     builder.button(text="🇬🇧 English", callback_data="set_lang_en")
@@ -1301,7 +1306,7 @@ async def handle_settings_language(callback: CallbackQuery) -> None:
     user = await get_user(callback.from_user.id)
     await callback.message.edit_text(
         get_message(user.language, 'select_language'),
-        reply_markup=get_language_keyboard()
+        reply_markup=get_language_keyboard(user.language) # Pass user.language here
     )
     await callback.answer()
 
@@ -1572,7 +1577,7 @@ async def fetch_news_from_source(source: Source) -> List[News]:
                     summary_prompt = f"Зроби коротке резюме цієї новини (до 250 символів) українською мовою: {item['content']}"
                     ai_summary = await call_gemini_api(summary_prompt)
                     
-                    topics_prompt = f"Визнач 3-5 ключових тем цієї новини у вигляді списку (наприклад, ['Політика', 'Економіка']), українською мовою: {item['content']}"
+                    topics_prompt = f"Визнач 3-5 ключових тем цієї новини у вигляді JSON-масиву рядків (наприклад, ['Політика', 'Економіка']), українською мовою: {item['content']}"
                     topics_response = await call_gemini_api(topics_prompt)
                     if topics_response:
                         try:
@@ -1613,7 +1618,8 @@ async def send_news_to_channel(news_item: News):
         return
 
     channel_identifier = NEWS_CHANNEL_ID
-    if channel_identifier.startswith("-100"):
+    # Attempt to convert to int if it looks like a numeric channel ID
+    if channel_identifier.startswith("-100") or channel_identifier.isdigit():
         try:
             channel_identifier = int(channel_identifier)
         except ValueError:
@@ -1697,7 +1703,29 @@ async def send_daily_digest():
 
 async def generate_ai_news_task():
     logger.info("Running generate_ai_news_task.")
+    pool = await get_db_pool()
+    ai_source_id = None
     try:
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                # Check if AI source exists
+                await cur.execute("SELECT id FROM sources WHERE name = 'AI Generated News' AND type = 'ai';")
+                ai_source = await cur.fetchone()
+                if ai_source:
+                    ai_source_id = ai_source['id']
+                else:
+                    # Create AI source if it doesn't exist
+                    await cur.execute(
+                        """
+                        INSERT INTO sources (name, url, type, is_active, is_verified, category)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                        """,
+                        ('AI Generated News', 'https://ai-generated.news', 'ai', True, True, 'ai_generated')
+                    )
+                    ai_source_id = (await cur.fetchone())['id']
+                    logger.info(f"Created AI news source with ID: {ai_source_id}")
+
         prompt = "Згенеруй цікаву, коротку (150-200 слів) новину на випадкову тему, яка може бути цікавою для широкої аудиторії в Україні. Додай заголовок. Назви новину 'AI News Update HH:MM:SS'."
         generated_content = await call_gemini_api(prompt)
         
@@ -1705,8 +1733,6 @@ async def generate_ai_news_task():
             title_match = re.search(r"^(.*?)\n\n", generated_content)
             title = title_match.group(1).strip() if title_match else f"AI News Update {datetime.now().strftime('%H:%M:%S')}"
             content = generated_content
-            
-            ai_source_id = 1
             
             news_item = News(
                 source_id=ai_source_id,
