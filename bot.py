@@ -36,9 +36,8 @@ import web_parser
 import telegram_parser
 import rss_parser
 import social_media_parser
-
-# google_search is assumed to be a globally available tool in this environment.
-# If not, uncomment: from tools import google_search
+# Експліцитний імпорт google_search, оскільки він не є глобально доступним
+import google_search 
 
 load_dotenv()
 
@@ -48,7 +47,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
 NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
-channel_ID = os.getenv("channel_ID") # Consider using this if it's a numeric channel ID
+channel_ID = os.getenv("channel_ID") # Розгляньте можливість використання цього, якщо це числовий ID каналу
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
@@ -309,6 +308,10 @@ MESSAGES = {
         'spanish_lang': "🇪🇸 Іспанська",
         'french_lang': "🇫🇷 Французька",
         'ukrainian_lang': "🇺🇦 Українська",
+        'italian_lang': "🇮🇹 Італійська",
+        'portuguese_lang': "🇵🇹 Португальська",
+        'japanese_lang': "🇯🇵 Японська",
+        'chinese_lang': "🇨🇳 Китайська",
         'back_to_ai_btn': "⬅️ До AI",
         'ask_free_ai_btn': "💬 Запитай AI",
         'news_channel_link_error': "Невірне посилання на канал.",
@@ -550,6 +553,10 @@ MESSAGES = {
         'spanish_lang': "🇪🇸 Spanish",
         'french_lang': "🇫🇷 French",
         'ukrainian_lang': "🇺🇦 Ukrainian",
+        'italian_lang': "🇮🇹 Italian",
+        'portuguese_lang': "🇵🇹 Portuguese",
+        'japanese_lang': "🇯🇵 Japanese",
+        'chinese_lang': "🇨🇳 Chinese",
         'back_to_ai_btn': "⬅️ Back to AI",
         'ask_free_ai_btn': "💬 Ask AI",
         'news_channel_link_error': "Invalid channel link.",
@@ -666,9 +673,11 @@ async def create_or_update_user(user_data: types.User):
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             telegram_id = user_data.id
-            username = user_data.username
-            first_name = user_data.first_name
-            last_name = user_data.last_name
+            # Безпечний доступ до username, first_name, last_name, оскільки вони можуть бути None
+            username = getattr(user_data, 'username', None)
+            first_name = getattr(user_data, 'first_name', None)
+            last_name = getattr(user_data, 'last_name', None)
+
             await cur.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
             user_record = await cur.fetchone()
             if user_record:
@@ -948,11 +957,13 @@ def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0):
     return builder.as_markup()
 
 def get_translate_language_keyboard(news_id: int, user_lang: str):
-    """Повертає клавіатуру для вибору мови перекладу."""
+    """Повертає клавіатуру для вибору мови перекладу (топ 10 мов)."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'english_lang'), callback_data=f"translate_to_en_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'ukrainian_lang'), callback_data=f"translate_to_uk_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'polish_lang'), callback_data=f"translate_to_pl_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'german_lang'), callback_data=f"translate_to_de_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'spanish_lang'), callback_data=f"translate_to_es_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'french_lang'), callback_data=f"translate_to_fr_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'italian_lang'), callback_data=f"translate_to_it_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'portuguese_lang'), callback_data=f"translate_to_pt_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'japanese_lang'), callback_data=f"translate_to_ja_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'chinese_lang'), callback_data=f"translate_to_zh_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data=f"ai_news_functions_menu_{news_id}"))
     return builder.as_markup()
 
@@ -1290,11 +1301,12 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
         caption_text += f"\n(Оригінальний URL зображення: {news_item.image_url})" # Додаємо оригінальний URL до тексту
 
     try:
-        msg = await bot.send_photo(chat_id=chat_id, photo=image_to_send, caption=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
+        # Додано disable_web_page_preview=True для уникнення помилок з неправильним типом контенту
+        msg = await bot.send_photo(chat_id=chat_id, photo=image_to_send, caption=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     except Exception as e:
         logger.warning(f"Не вдалося надіслати фото для новини {news_id} з URL {image_to_send}: {e}. Відправляю текстове повідомлення.")
         # Якщо відправка фото не вдалася, надсилаємо просто текстове повідомлення
-        msg = await bot.send_message(chat_id=chat_id, text=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
+        msg = await bot.send_message(chat_id=chat_id, text=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     
     if msg:
         await state.update_data(last_message_id=msg.message_id)
@@ -1459,7 +1471,7 @@ async def handle_translate_to_language(callback: CallbackQuery, state: FSMContex
     news_id = int(parts[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
-    language_names = {"en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French", "uk": "Ukrainian"}
+    language_names = {"en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French", "uk": "Ukrainian", "it": "Italian", "pt": "Portuguese", "ja": "Japanese", "zh": "Chinese"} # Додано нові мови
     language_name = language_names.get(lang_code, "обраною мовою") # Fallback для назви мови
     news_item = await get_news_by_id(news_id)
     if not news_item:
@@ -1803,10 +1815,11 @@ async def send_news_to_channel(news_item: News):
         f"Опубліковано: {news_item.published_at.strftime('%d.%m.%Y %H:%M')}"
     )
     try:
+        # Додано disable_web_page_preview=True для уникнення помилок з неправильним типом контенту
         if news_item.image_url:
-            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
+            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         else:
-            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
+            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         logger.info(get_message('uk', 'news_published_success', title=news_item.title, identifier=channel_identifier))
         await mark_news_as_published_to_channel(news_item.id)
     except Exception as e:
@@ -2487,7 +2500,8 @@ async def process_topic_to_remove(message: Message, state: FSMContext):
 # Scheduler (Планувальник задач)
 async def scheduler():
     """Планувальник для періодичних задач бота."""
-    fetch_schedule_expression = '*/5 * * * *' # Кожні 5 хвилин
+    # Кожні 3 хвилини (180 секунд), найближче до 200 секунд для cron виразу
+    fetch_schedule_expression = '*/3 * * * *' 
     delete_schedule_expression = '0 */5 * * *' # Кожні 5 годин
     daily_digest_schedule_expression = '0 9 * * *' # Щодня о 9:00 UTC
     ai_news_generation_schedule = '0 */6 * * *' # Кожні 6 годин
