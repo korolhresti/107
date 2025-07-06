@@ -340,234 +340,6 @@ MESSAGES = {
         'long_term_connections_result': "<b>Довгострокові зв'язки:</b>\n{result}",
         'ai_prediction_generating': "Генерую AI-прогноз...",
         'ai_prediction_result': "<b>AI-прогноз:</b>\n{result}",
-        'onboarding_step_1': "Крок 1: Додайте джерело '➕ Додати джерело'.",
-        'onboarding_step_2': "Крок 2: Перегляньте новини '📰 Мої новини'.",
-        'onboarding_step_3': "Крок 3: Натисніть '🧠 AI-функції' під новиною.",
-        'reaction_interesting': "🔥 Цікаво",
-        'reaction_not_much': "😐 Не дуже",
-        'reaction_delete': "❌ Видалити",
-        'reaction_saved': "Реакція збережена!",
-        'reaction_deleted': "Новину видалено.",
-        'premium_granted': "Вітаємо! Преміум-доступ отримано!",
-        'digest_granted': "Вітаємо! Безкоштовний щоденний AI-дайджест отримано!",
-        'donate_message': "Дякуємо за підтримку! Картка Monobank: <code>{card_number}</code> ☕",
-        'my_sources_header': "Ваші джерела:",
-        'no_sources_added': "Джерел немає.",
-        'source_item': "{idx}. {source_name} ({source_url}) - {status} [🗑️ /source_delete_{source_id}]",
-        'source_deleted_success': "Джерело видалено.",
-        'source_delete_error': "Помилка видалення джерела.",
-        'subscribe_menu_prompt': "Керування підписками:",
-        'no_subscriptions': "Немає підписок на теми.",
-        'your_subscriptions': "Ваші підписки: {topics}",
-        'add_subscription_prompt': "Теми для підписки (через кому):",
-        'subscription_added': "Підписки '{topics}' додано!",
-        'subscription_removed': "Підписку '{topic}' видалено.",
-        'add_subscription_btn': "➕ Додати підписку",
-        'remove_subscription_btn': "➖ Видалити підписку",
-        'remove_subscription_prompt': "Тема для видалення:",
-        'subscription_not_found': "Тема '{topic}' не знайдена.",
-        'pro_tier_info': "Pro-рівень: доступ до API та розширені інтеграції. Зв'яжіться з адміном.",
-        'help_sell_btn': "🤝 Допомогти продати",
-        'help_buy_btn': "🛒 Допомогти купити",
-        'help_sell_message': "Зв'яжіться з нашим ботом-помічником з продажу: {bot_link}",
-        'help_buy_message': "Перегляньте канал з найкращими пропозиціями: {channel_link}",
-        'help_btn': "❓ Допомога",
-        'language_btn': "🌐 Мова",
-        'invite_friends': "👥 Запросити друзів",
-        'subscribe_menu': "➕ Підписки",
-        'english_lang': "English", # Added missing translation
-        'ukrainian_lang': "Українська", # Added missing translation
-        'polish_lang': "Polski", # Added missing translation
-        'german_lang': "Deutsch", # Added missing translation
-        'spanish_lang': "Español", # Added missing translation
-        'french_lang': "Français", # Added missing translation
-        'unknown_source': "Невідоме джерело", # Added missing translation
-        'bookmark_add_btn': "⭐️ Закладка", # Added missing translation
-        'action_done': "Дію виконано.", # Added missing translation
-    },
-    'en': {
-        'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
-        'main_menu_prompt': "Choose an action:",
-        'help_text': ("<b>Commands:</b>\n"
-                      "/start - Start\n"
-                      "/menu - Menu\n"
-                      "/cancel - Cancel\n"
-                      "/my_news - My News\n"
-                      "/add_source - Add Source\n"
-                      "/my_sources - My Sources\n"
-                      "/ask_expert - Expert\n"
-                      "/invite - Invite\n"
-                      "/subscribe - Subscriptions\n"
-                      "/donate - Donate ☕\n"
-                      "<b>AI Media:</b> /ai_media_menu"),
-        'action_cancelled': "Cancelled. Choose action:",
-        'add_source_prompt': "Send source URL:",
-        'invalid_url': "Invalid URL.",
-        'source_url_not_found': "Source URL not found.",
-        'source_added_success': "Source '{source_url}' added!",
-        'add_source_error': "Error adding source.",
-        'no_new_news': "No new news.",
-        'news_not_found': "News not found.",
-        'no_more_news': "No more news.",
-        'first_news': "First news.",
-        'error_start_menu': "Error. Start with /menu.",
-        'ai_functions_prompt': "AI Functions:",
-        'ai_function_premium_only': "Premium only.",
-        'news_title_label': "Title:",
-        'news_content_label': "Content:",
-        'published_at_label': "Published:",
-        'news_progress': "News {current_index} of {total_news}",
-        'read_source_btn': "🔗 Source",
-        'ai_functions_btn': "🧠 AI Functions",
-        'prev_btn': "⬅️ Previous",
-        'next_btn': "➡️ Next",
-        'main_menu_btn': "⬅️ Menu",
-        'generating_ai_summary': "Generating AI summary...",
-        'ai_summary_label': "AI Summary:",
-        'select_translate_language': "Select language:",
-        'translating_news': "Translating...",
-        'translation_label': "Translation to {language_name}:",
-        'generating_audio': "Generating audio...",
-        'audio_news_caption': "🔊 News: {title}",
-        'audio_error': "Error generating audio.",
-        'ask_news_ai_prompt': "Your question:",
-        'processing_question': "Processing...",
-        'ai_response_label': "AI Response:",
-        'ai_news_not_found': "News not found.",
-        'ask_free_ai_prompt': "Your question to AI:",
-        'extracting_entities': "Extracting entities...",
-        'entities_label': "Entities:",
-        'explain_term_prompt': "Term to explain:",
-        'explaining_term': "Explaining...",
-        'term_explanation_label': "Explanation of '{term}':",
-        'topics_label': "Topics:",
-        'checking_facts': "Checking facts...",
-        'fact_check_label': "Fact Check:",
-        'analyzing_sentiment': "Analyzing sentiment...",
-        'sentiment_label': "Sentiment:",
-        'detecting_bias': "Detecting bias...",
-        'bias_label': "Bias Detection:",
-        'generating_audience_summary': "Generating audience summary...",
-        'audience_summary_label': "Audience Summary:",
-        'searching_historical_analogues': "Searching analogues...",
-        'historical_analogues_label': "Historical Analogues:",
-        'analyzing_impact': "Analyzing impact...",
-        'impact_label': "Impact Analysis:",
-        'performing_monetary_analysis': "Performing monetary analysis...",
-        'monetary_analysis_label': "Monetary Analysis:",
-        'bookmark_added': "News added to bookmarks!",
-        'bookmark_already_exists': "Already bookmarked.",
-        'bookmark_add_error': "Error bookmarking.",
-        'bookmark_removed': "News removed from bookmarks!",
-        'bookmark_not_found': "News not in bookmarks.",
-        'bookmark_remove_error': "Error removing bookmark.",
-        'no_bookmarks': "No bookmarks yet.",
-        'your_bookmarks_label': "Your Bookmarks:",
-        'report_fake_news_btn': "🚩 Report Fake News",
-        'report_already_sent': "Report already sent.",
-        'report_sent_success': "Thank you! Report sent.",
-        'report_action_done': "Thank you! Choose action:",
-        'user_not_identified': "User not identified.",
-        'no_admin_access': "No access.",
-        'loading_moderation_news': "Loading news...",
-        'no_pending_news': "No news pending moderation.",
-        'moderation_news_label': "News for moderation ({current_index} of {total_news}):",
-        'source_label': "Source:",
-        'status_label': "Status:",
-        'approve_btn': "✅ Approve",
-        'reject_btn': "❌ Reject",
-        'news_approved': "News {news_id} approved!",
-        'news_rejected': "News {news_id} rejected!",
-        'all_moderation_done': "All news processed.",
-        'no_more_moderation_news': "No more news.",
-        'first_moderation_news': "First news.",
-        'source_stats_label': "📊 Source Stats (top-10):",
-        'source_stats_entry': "{idx}. {source_name}: {count} publications",
-        'no_source_stats': "No source stats available.",
-        'your_invite_code': "Your invite code: <code>{invite_code}</code>\nShare: {invite_link}",
-        'invite_error': "Error generating code.",
-        'daily_digest_header': "📰 Your daily AI News Digest:",
-        'daily_digest_entry': "<b>{idx}. {title}</b>\n{summary}\n🔗 <a href='{source_url}'>Read</a>\n\n",
-        'no_news_for_digest': "No news for digest.",
-        'ai_rate_limit_exceeded': "Too many AI requests. Used {count}/{limit}. Try tomorrow or premium.",
-        'what_new_digest_header': "👋 Hello! You missed {count} news. Digest:",
-        'what_new_digest_footer': "\n\nSee all news? Click '📰 My News'.",
-        'cancel_btn': "Cancel",
-        'toggle_notifications_btn': "🔔 Notifications",
-        'set_digest_frequency_btn': "🔄 Digest Frequency",
-        'toggle_safe_mode_btn': "🔒 Safe Mode",
-        'set_view_mode_btn': "👁️ View Mode",
-        'translate_btn': "🌐 Translate",
-        'extract_entities_btn': "🧑‍🤝‍🧑 Entities",
-        'explain_term_btn': "❓ Explain",
-        'listen_news_btn': "🔊 Listen",
-        'fact_check_btn': "✅ Fact Check (Premium)",
-        'bias_detection_btn': "🔍 Bias Detection (Premium)",
-        'audience_summary_btn': "📝 Audience Summary (Premium)",
-        'historical_analogues_btn': "📜 Analogues (Premium)",
-        'impact_analysis_btn': "💥 Impact Analysis (Premium)",
-        'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
-        'back_to_ai_btn': "⬅️ До AI",
-        'news_channel_link_error': "Invalid channel link.",
-        'news_channel_link_warning': "Invalid link format.",
-        'news_published_success': "News '{title}' published to channel {identifier}.",
-        'news_publish_error': "Error publishing '{title}': {error}",
-        'source_parsing_warning': "Failed to parse from source: {name} ({url}).",
-        'source_parsing_error': "Error parsing source {name} ({url}): {error}",
-        'no_active_sources': "No active sources.",
-        'news_already_exists': "News with URL {url} already exists.",
-        'news_added_success': "News '{title}' added.",
-        'news_not_added': "News from source {name} not added.",
-        'source_last_parsed_updated': "Updated last_parsed for source {name}.",
-        'deleted_expired_news': "Deleted {count} expired news.",
-        'no_expired_news': "No expired news.",
-        'daily_digest_no_users': "No users for digest.",
-        'daily_digest_no_news': "No news for digest for user {user_id}.",
-        'daily_digest_sent_success': "Digest sent to user {user_id}.",
-        'daily_digest_send_error': "Error sending digest to user {user_id}: {error}",
-        'invite_link_label': "Invite Link",
-        'source_stats_top_10': "📊 Source Stats (top-10):",
-        'source_stats_item': "{idx}. {source_name}: {publication_count} publications",
-        'no_source_stats_available': "No source stats.",
-        'moderation_news_header': "News for moderation ({current_index} of {total_news}):",
-        'moderation_news_approved': "News {news_id} approved!",
-        'moderation_news_rejected': "News {news_id} rejected!",
-        'moderation_all_done': "All news processed.",
-        'moderation_no_more_news': "No more news.",
-        'moderation_first_news': "First news.",
-        'ask_expert_prompt': "Select expert:",
-        'expert_portnikov_btn': "🕵️‍♂️ Vitaliy Portnikov",
-        'expert_libsits_btn': "🧠 Igor Libsits",
-        'ask_expert_question_prompt': "Your question to {expert_name}:",
-        'expert_response_label': "Response from {expert_name}:",
-        'price_analysis_prompt': "💰 AI Price Analysis",
-        'price_analysis_generating': "Analyzing price...",
-        'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
-        'ai_media_menu_prompt': "AI Media Functions:",
-        'youtube_to_news_btn': "▶️ YouTube → News",
-        'create_filtered_channel_btn': "➕ Create My Channel",
-        'create_ai_media_btn': "🤖 Create AI Media",
-        'youtube_url_prompt': "YouTube video link:",
-        'youtube_processing': "Processing YouTube...",
-        'youtube_summary_label': "<b>YouTube News:</b>\n{summary}",
-        'filtered_channel_prompt': "Channel name and topics (comma-separated):",
-        'filtered_channel_creating': "Creating channel '{channel_name}' with topics: {topics}...",
-        'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
-        'ai_media_creating': "Creating AI media...",
-        'ai_media_created': "Your AI media '{media_name}' 'created'!",
-        'analytics_menu_prompt': "Analytics:",
-        'infographics_btn': "📈 Infographics",
-        'trust_index_btn': "⚖️ Trust Index",
-        'long_term_connections_btn': "🔗 Connections",
-        'ai_prediction_btn': "🔮 AI Prediction",
-        'infographics_generating': "Generating infographics...",
-        'infographics_result': "<b>Infographics:</b>\n{result}",
-        'trust_index_calculating': "Calculating trust index...",
-        'trust_index_result': "<b>Trust Index:</b>\n{result}",
-        'long_term_connections_generating': "Searching connections...",
-        'long_term_connections_result': "<b>Long-term Connections:</b>\n{result}",
-        'ai_prediction_generating': "Generating AI prediction...",
-        'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
         'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
         'onboarding_step_2': "Step 2: View news '📰 My News'.",
         'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
@@ -616,8 +388,8 @@ MESSAGES = {
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
-    # Fallback to 'uk' if user_lang is not found, then to a default string if key is missing
-    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, f"").format(**kwargs) # Changed fallback to empty string
+    # Fallback to 'uk' if user_lang is not found, then to an empty string if key is missing
+    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, "").format(**kwargs)
 
 def normalize_url(url: str) -> str:
     """Normalizes a URL to ensure consistent comparison."""
@@ -695,6 +467,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 return None # News already exists
 
             # Find or create source
+            # Use normalized_source_url for source lookup as well
             await cur.execute("SELECT id FROM sources WHERE normalized_source_url = %s", (normalized_source_url,))
             source_record = await cur.fetchone()
             source_id = None
@@ -705,7 +478,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 parsed_url = HttpUrl(news_data['source_url'])
                 source_name = parsed_url.host if parsed_url.host else 'Unknown Source'
                 await cur.execute(
-                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
+                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
                     (user_id_for_source, source_name, str(news_data['source_url']), normalized_source_url, news_data.get('source_type', 'web'))
                 )
                 source_id = (await cur.fetchone())['id']
@@ -723,6 +496,8 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                     topics_raw = await call_gemini_api(f"Класифікуй цю новину за 3-5 ключовими темами українською мовою, перелічи їх через кому: {news_data['title']}. {news_data['content']}", user_telegram_id=None) # No user_telegram_id for background task
                     if topics_raw:
                         ai_classified_topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
+                    else:
+                        ai_classified_topics = []
                 except Exception as e:
                     logger.error(f"Failed to classify topics for news {news_data['title']}: {e}")
                     ai_classified_topics = [] # Default to empty list on failure
@@ -750,11 +525,8 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
                 query += " AND n.published_at >= %s"
                 params.append(start_datetime)
             
-            if topics:
+            if topics and len(topics) > 0: # Ensure topics list is not empty
                 # Corrected operator for TEXT[] array overlap
-                # Use ANY for checking if any element in the news's topics array is in the user's topics list
-                # Or use && (overlap operator) if you want to check if the two arrays have any common elements
-                # Assuming ai_classified_topics is TEXT[] and topics is List[str]
                 query += " AND n.ai_classified_topics && %s::text[]"
                 params.append(topics) # Pass the list directly for TEXT[] comparison
 
@@ -885,7 +657,6 @@ class SubscriptionStates(StatesGroup):
 
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # Removed 'settings_btn' and 'ask_free_ai_btn'
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
@@ -905,7 +676,6 @@ def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardM
 
 def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # Removed 'ask_ai_btn' and 'next_ai_page_btn' and the entire page 1 logic
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'extract_entities_btn'), callback_data=f"extract_entities_{news_id}"))
@@ -1052,9 +822,9 @@ async def process_source_url(message: Message, state: FSMContext):
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 parsed_url = HttpUrl(source_url)
-                source_name = parsed_url.host if parsed_url.host else 'Невідоме джерело'
+                source_name = parsed_url.host if parsed_url.host else get_message(user_lang, 'unknown_source')
                 await cur.execute(
-                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
+                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
                     (user.id, source_name, source_url, normalized_url, 'web')
                 )
                 await conn.commit()
@@ -1301,8 +1071,6 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'ai_functions_prompt'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang, page))
     await callback.answer()
 
-# Removed handle_ai_summary_select_type and handle_smart_summary as per request
-
 @router.callback_query(F.data.startswith("translate_select_lang_"))
 async def handle_translate_select_language(callback: CallbackQuery, state: FSMContext):
     news_id = int(callback.data.split('_')[3])
@@ -1361,9 +1129,6 @@ async def handle_listen_news(callback: CallbackQuery):
         logger.error(f"Error generating or sending audio for news {news_id}: {e}", exc_info=True)
         await callback.message.edit_text(get_message(user_lang, 'audio_error'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
-
-# Removed ask_news_ai and process_ai_question as per request
-# Removed ask_free_ai and process_free_ai_question as per request
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
@@ -1428,8 +1193,6 @@ async def process_term_explanation(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'term_explanation_label', term=term) + f"\n{explanation}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await state.clear()
-
-# Removed handle_classify_topics as per request
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
 async def handle_fact_check_news(callback: CallbackQuery):
@@ -1873,8 +1636,6 @@ async def handle_ai_media_menu(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'ai_media_menu_prompt'), reply_markup=get_ai_media_menu_keyboard(user_lang))
     await callback.answer()
 
-# Removed handle_generate_ai_news as per request
-
 @router.callback_query(F.data == "youtube_to_news")
 async def handle_youtube_to_news(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -2189,7 +1950,6 @@ async def scheduler():
     fetch_schedule_expression = '*/5 * * * *'
     delete_schedule_expression = '0 */5 * * *'
     daily_digest_schedule_expression = '0 9 * * *'
-    # Removed ai_news_generation_schedule as per request
 
     while True:
         now = datetime.now(timezone.utc)
@@ -2205,8 +1965,6 @@ async def scheduler():
         daily_digest_itr = croniter(daily_digest_schedule_expression, now)
         next_daily_digest_run = daily_digest_itr.get_next(datetime)
         daily_digest_delay_seconds = (next_daily_digest_run - now).total_seconds()
-
-        # Removed ai_news_itr and next_ai_news_run as per request
         
         min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds)
         
@@ -2224,9 +1982,6 @@ async def scheduler():
             asyncio.create_task(delete_expired_news_task())
         if (current_utc_time - next_daily_digest_run).total_seconds() >= -1:
             asyncio.create_task(send_daily_digest())
-        # Removed ai_news_generation_task call
-
-# Removed generate_ai_news_task as per request
 
 @app.on_event("startup")
 async def on_startup():
@@ -2359,7 +2114,6 @@ async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Note: ai_summary and ai_classified_topics fields are handled separately or removed from direct update.
             # Ensure ai_classified_topics is passed as a list for TEXT[] column
             params = [news.source_id, news.title, news.content, str(news.source_url), normalize_url(str(news.source_url)), str(news.image_url) if news.image_url else None, news.published_at, news.moderation_status, news.expires_at, news.is_published_to_channel, news.ai_classified_topics, news_id]
             await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, normalized_source_url = %s, image_url = %s, published_at = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s, ai_classified_topics = %s WHERE id = %s RETURNING *;""", tuple(params))
