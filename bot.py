@@ -280,7 +280,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Прослухати",
         'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
-        'sentiment_trend_analysis_btn': "📊 Настрій (Преміум)",
+        'sentiment_trend_analysis_btn': "📊 AI Настрій", # Updated text for AI Media menu
         'bias_detection_btn': "🔍 Упередженість (Преміум)",
         'audience_summary_btn': "📝 Резюме для аудиторії (Преміум)",
         'historical_analogues_btn': "📜 Аналоги (Преміум)",
@@ -288,7 +288,7 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Грошовий аналіз (Преміум)",
         'prev_ai_page_btn': "⬅️ Назад (AI)",
         'bookmark_add_btn': "❤️ Обране",
-        'comments_btn': "💬 Коментарі",
+        'comments_btn': "💬 Коментарі", # New button
         'english_lang': "🇬🇧 Англійська",
         'polish_lang': "🇵🇱 Польська",
         'german_lang': "🇩🇪 Німецька",
@@ -335,11 +335,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Ігор Лібсіц",
         'ask_expert_question_prompt': "Ваше запитання до {expert_name}:",
         'expert_response_label': "Відповідь {expert_name}:",
-        'price_analysis_prompt': "Опис товару та, якщо є, фото:",
+        'price_analysis_prompt': "💰 AI Аналіз Цін", # Updated text for AI Media menu
         'price_analysis_generating': "Аналізую ціну...",
         'price_analysis_result': "<b>Аналіз ціни:</b>\n{result}",
         'ai_media_menu_prompt': "AI-медіа функції:",
-        'generate_ai_news_btn': "📝 AI-новина (тренди)",
+        'generate_ai_news_btn': "📝 AI Генерація Новин", # Updated text for AI Media menu
         'youtube_to_news_btn': "▶️ YouTube → Новина",
         'create_filtered_channel_btn': "➕ Створити мій канал",
         'create_ai_media_btn': "🤖 Створити AI Медіа",
@@ -396,7 +396,10 @@ MESSAGES = {
         'help_sell_btn': "🤝 Допоможи продати",
         'help_buy_btn': "🛒 Допоможи купити",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
-        'help_buy_message': "Check the channel with best offers: {channel_link}"
+        'help_buy_message': "Check the channel with best offers: {channel_link}",
+        'settings_btn': "⚙️ Налаштування", # New button
+        'help_btn': "❓ Допомога", # New button
+        'language_btn': "🌐 Мова", # New button
     },
     'en': {
         'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
@@ -521,7 +524,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Listen",
         'next_ai_page_btn': "➡️ Next (AI)",
         'fact_check_btn': "✅ Fact Check (Premium)",
-        'sentiment_trend_analysis_btn': "📊 Sentiment Trend (Premium)",
+        'sentiment_trend_analysis_btn': "📊 AI Sentiment Trend", # Updated text for AI Media menu
         'bias_detection_btn': "🔍 Bias Detection (Premium)",
         'audience_summary_btn': "📝 Audience Summary (Premium)",
         'historical_analogues_btn': "📜 Analogues (Premium)",
@@ -529,7 +532,7 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
         'prev_ai_page_btn': "⬅️ Back (AI)",
         'bookmark_add_btn': "❤️ Bookmark",
-        'comments_btn': "💬 Comments",
+        'comments_btn': "💬 Comments", # New button
         'english_lang': "🇬🇧 Англійська",
         'polish_lang': "🇵🇱 Польська",
         'german_lang': "🇩🇪 Німецька",
@@ -576,11 +579,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Igor Libsits",
         'ask_expert_question_prompt': "Your question to {expert_name}:",
         'expert_response_label': "Response from {expert_name}:",
-        'price_analysis_prompt': "Product description and photo:",
+        'price_analysis_prompt': "💰 AI Price Analysis", # Updated text for AI Media menu
         'price_analysis_generating': "Analyzing price...",
         'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
         'ai_media_menu_prompt': "AI Media Functions:",
-        'generate_ai_news_btn': "📝 AI News (trends)",
+        'generate_ai_news_btn': "📝 AI News Generation", # Updated text for AI Media menu
         'youtube_to_news_btn': "▶️ YouTube → News",
         'create_filtered_channel_btn': "➕ Create My Channel",
         'create_ai_media_btn': "🤖 Create AI Media",
@@ -594,19 +597,19 @@ MESSAGES = {
         'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
         'ai_media_creating': "Creating AI media...",
         'ai_media_created': "Your AI media '{media_name}' 'created'!",
-        'analytics_menu_prompt': "Аналітика:",
-        'infographics_btn': "📈 Інфографіка",
-        'trust_index_btn': "⚖️ Індекс довіри",
-        'long_term_connections_btn': "🔗 Зв'язки",
-        'ai_prediction_btn': "🔮 AI-прогноз",
-        'infographics_generating': "Генерую інфографіку...",
-        'infographics_result': "<b>Інфографіка:</b>\n{result}",
-        'trust_index_calculating': "Розраховую індекс довіри...",
-        'trust_index_result': "<b>Індекс довіри:</b>\n{result}",
-        'long_term_connections_generating': "Шукаю зв'язки...",
-        'long_term_connections_result': "<b>Довгострокові зв'язки:</b>\n{result}",
-        'ai_prediction_generating': "Генерую AI-прогноз...",
-        'ai_prediction_result': "<b>AI-прогноз:</b>\n{result}",
+        'analytics_menu_prompt': "Analytics:",
+        'infographics_btn': "📈 Infographics",
+        'trust_index_btn': "⚖️ Trust Index",
+        'long_term_connections_btn': "🔗 Connections",
+        'ai_prediction_btn': "🔮 AI Prediction",
+        'infographics_generating': "Generating infographics...",
+        'infographics_result': "<b>Infographics:</b>\n{result}",
+        'trust_index_calculating': "Calculating trust index...",
+        'trust_index_result': "<b>Trust Index:</b>\n{result}",
+        'long_term_connections_generating': "Searching connections...",
+        'long_term_connections_result': "<b>Long-term Connections:</b>\n{result}",
+        'ai_prediction_generating': "Generating AI prediction...",
+        'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
         'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
         'onboarding_step_2': "Step 2: View news '📰 My News'.",
         'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
@@ -637,7 +640,10 @@ MESSAGES = {
         'help_sell_btn': "🤝 Help Sell",
         'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
-        'help_buy_message': "Check the channel with best offers: {channel_link}"
+        'help_buy_message': "Check the channel with best offers: {channel_link}",
+        'settings_btn': "⚙️ Settings", # New button
+        'help_btn': "❓ Help", # New button
+        'language_btn': "🌐 Language", # New button
     }
 }
 
@@ -699,6 +705,10 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
+            if await cur.fetchone():
+                return None # News already exists
+
             await cur.execute("SELECT id FROM sources WHERE source_url = %s", (str(news_data['source_url']),))
             source_record = await cur.fetchone()
             source_id = None
@@ -713,10 +723,6 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                     (user_id_for_source, source_name, str(news_data['source_url']), news_data.get('source_type', 'web'))
                 )
                 source_id = (await cur.fetchone())['id']
-
-            await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
-            if await cur.fetchone():
-                return None
 
             moderation_status = 'approved' if news_data.get('user_id_for_source') is None else 'pending'
             
@@ -739,8 +745,14 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
             params = [user_id]
             
             if topics:
-                topic_conditions = [f"ai_classified_topics @> '[\"{topic}\"]'" for topic in topics]
-                query += f" AND ({' OR '.join(topic_conditions)})"
+                topic_conditions = []
+                for topic in topics:
+                    # Use the '?' operator for checking if a JSONB array contains a specific string element
+                    topic_conditions.append("ai_classified_topics ? %s")
+                    params.append(topic) # Add topic directly as a parameter
+                
+                if topic_conditions:
+                    query += f" AND ({' OR '.join(topic_conditions)})"
 
             query += " ORDER BY published_at DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
@@ -1576,6 +1588,17 @@ async def handle_classify_topics(callback: CallbackQuery):
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
+    if news_id == 0: # Handle dummy news_id from AI Media menu
+        if not await check_premium_access(callback.from_user.id):
+            await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
+            return
+        await callback.message.edit_text(get_message(user_lang, 'classifying_topics'))
+        # For general topic classification, we might need to ask for text or use a general trend analysis
+        # For now, let's just return a placeholder or prompt for text
+        await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt') + "\n(Надішліть текст для класифікації тем)", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
+        await callback.answer()
+        return
+
     if not news_item:
         await callback.answer(get_message(user_lang, 'news_not_found'), show_alert=True)
         return
@@ -1687,17 +1710,6 @@ async def send_news_to_channel(news_item: News):
         return
     
     channel_identifier = NEWS_CHANNEL_LINK
-    # The channel ID is already in the correct format (-100...) so no need to modify it
-    # if 't.me/' in NEWS_CHANNEL_LINK:
-    #     channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
-    
-    # if channel_identifier.startswith('-100') and channel_identifier[1:].replace('-', '').isdigit():
-    #     pass
-    # elif channel_identifier.startswith('+'):
-    #     logger.error(get_message('uk', 'news_channel_link_error', link=NEWS_CHANNEL_LINK))
-    #     return
-    # elif not channel_identifier.startswith('@'):
-    #     channel_identifier = '@' + channel_identifier
     
     display_content = news_item.content
     if len(display_content) > 250:
@@ -1719,7 +1731,11 @@ async def send_news_to_channel(news_item: News):
     
     try:
         if news_item.image_url:
-            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
+            try:
+                await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
+            except Exception as photo_e:
+                logger.error(f"Failed to send photo for news {news_item.id} to channel {channel_identifier} from URL {news_item.image_url}: {photo_e}. Sending message without photo.", exc_info=True)
+                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         else:
             await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         
@@ -1747,7 +1763,12 @@ async def fetch_and_post_news_task():
             if source['source_type'] == 'rss':
                 news_data = await rss_parser.parse_rss_feed(source['source_url'])
             elif source['source_type'] == 'web':
+                logger.info(f"Парсинг веб-сайту: {source['source_url']}")
                 news_data = await web_parser.parse_website(source['source_url'])
+                if news_data:
+                    logger.info(f"Парсер веб-сайту {source['source_url']} знайшов новину: {news_data.get('title', 'Без заголовка')}")
+                else:
+                    logger.info(f"Парсер веб-сайту {source['source_url']} не знайшов нових новин.")
             elif source['source_type'] == 'telegram':
                 news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
             elif source['source_type'] == 'social_media':
@@ -1851,7 +1872,7 @@ async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: s
             if invite_record:
                 invite_id = invite_record['id']
                 inviter_user_db_id = invite_record['inviter_user_id']
-                await cur.execute("""UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;""", (new_user_db_id, invite_id))
+                await cur.execute("UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;", (new_user_db_id, invite_id))
                 
                 await cur.execute("UPDATE users SET premium_invite_count = premium_invite_count + 1, digest_invite_count = digest_invite_count + 1 WHERE id = %s RETURNING premium_invite_count, digest_invite_count;", (inviter_user_db_id,))
                 inviter_updated_counts = await cur.fetchone()
@@ -1970,7 +1991,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
     search_query = f"ціна {user_input} купити Україна"
-    if image_data_base64:
+    if image_data_base664:
         search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"])
