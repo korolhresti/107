@@ -44,7 +44,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069") # Встановлено Channel ID
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
@@ -280,7 +280,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Прослухати",
         'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
-        'sentiment_trend_analysis_btn': "📊 AI Настрій", # Updated text for AI Media menu
+        'sentiment_trend_analysis_btn': "📊 AI Настрій",
         'bias_detection_btn': "🔍 Упередженість (Преміум)",
         'audience_summary_btn': "📝 Резюме для аудиторії (Преміум)",
         'historical_analogues_btn': "📜 Аналоги (Преміум)",
@@ -288,7 +288,7 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Грошовий аналіз (Преміум)",
         'prev_ai_page_btn': "⬅️ Назад (AI)",
         'bookmark_add_btn': "❤️ Обране",
-        'comments_btn': "💬 Коментарі", # New button
+        'comments_btn': "💬 Коментарі",
         'english_lang': "🇬🇧 Англійська",
         'polish_lang': "🇵🇱 Польська",
         'german_lang': "🇩🇪 Німецька",
@@ -335,11 +335,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Ігор Лібсіц",
         'ask_expert_question_prompt': "Ваше запитання до {expert_name}:",
         'expert_response_label': "Відповідь {expert_name}:",
-        'price_analysis_prompt': "💰 AI Аналіз Цін", # Updated text for AI Media menu
+        'price_analysis_prompt': "💰 Аналіз цін",
         'price_analysis_generating': "Аналізую ціну...",
         'price_analysis_result': "<b>Аналіз ціни:</b>\n{result}",
         'ai_media_menu_prompt': "AI-медіа функції:",
-        'generate_ai_news_btn': "📝 AI Генерація Новин", # Updated text for AI Media menu
+        'generate_ai_news_btn': "📝 Генерація Новин",
         'youtube_to_news_btn': "▶️ YouTube → Новина",
         'create_filtered_channel_btn': "➕ Створити мій канал",
         'create_ai_media_btn': "🤖 Створити AI Медіа",
@@ -393,13 +393,16 @@ MESSAGES = {
         'remove_subscription_prompt': "Тема для видалення:",
         'subscription_not_found': "Тема '{topic}' не знайдена.",
         'pro_tier_info': "Pro-рівень: доступ до API та розширені інтеграції. Зв'яжіться з адміном.",
-        'help_sell_btn': "🤝 Допоможи продати",
-        'help_buy_btn': "🛒 Допоможи купити",
-        'help_sell_message': "Contact our sales assistant bot: {bot_link}",
-        'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'settings_btn': "⚙️ Налаштування", # New button
-        'help_btn': "❓ Допомога", # New button
-        'language_btn': "🌐 Мова", # New button
+        'help_sell_btn': "🤝 Допомогти продати",
+        'help_buy_btn': "🛒 Допомогти купити",
+        'help_sell_message': "Зв'яжіться з нашим ботом-помічником з продажу: {bot_link}",
+        'help_buy_message': "Перегляньте канал з найкращими пропозиціями: {channel_link}",
+        'settings_btn': "⚙️ Налаштування",
+        'help_btn': "❓ Допомога",
+        'language_btn': "🌐 Мова",
+        'ask_free_ai': "💬 Запитати AI",
+        'invite_friends': "👥 Запросити друзів",
+        'subscribe_menu': "➕ Підписки",
     },
     'en': {
         'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
@@ -524,7 +527,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Listen",
         'next_ai_page_btn': "➡️ Next (AI)",
         'fact_check_btn': "✅ Fact Check (Premium)",
-        'sentiment_trend_analysis_btn': "📊 AI Sentiment Trend", # Updated text for AI Media menu
+        'sentiment_trend_analysis_btn': "📊 AI Sentiment Trend",
         'bias_detection_btn': "🔍 Bias Detection (Premium)",
         'audience_summary_btn': "📝 Audience Summary (Premium)",
         'historical_analogues_btn': "📜 Analogues (Premium)",
@@ -532,7 +535,7 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
         'prev_ai_page_btn': "⬅️ Back (AI)",
         'bookmark_add_btn': "❤️ Bookmark",
-        'comments_btn': "💬 Comments", # New button
+        'comments_btn': "💬 Comments",
         'english_lang': "🇬🇧 Англійська",
         'polish_lang': "🇵🇱 Польська",
         'german_lang': "🇩🇪 Німецька",
@@ -579,11 +582,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Igor Libsits",
         'ask_expert_question_prompt': "Your question to {expert_name}:",
         'expert_response_label': "Response from {expert_name}:",
-        'price_analysis_prompt': "💰 AI Price Analysis", # Updated text for AI Media menu
+        'price_analysis_prompt': "💰 AI Price Analysis",
         'price_analysis_generating': "Analyzing price...",
         'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
         'ai_media_menu_prompt': "AI Media Functions:",
-        'generate_ai_news_btn': "📝 AI News Generation", # Updated text for AI Media menu
+        'generate_ai_news_btn': "📝 AI News Generation",
         'youtube_to_news_btn': "▶️ YouTube → News",
         'create_filtered_channel_btn': "➕ Create My Channel",
         'create_ai_media_btn': "🤖 Create AI Media",
@@ -641,9 +644,12 @@ MESSAGES = {
         'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
         'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'settings_btn': "⚙️ Settings", # New button
-        'help_btn': "❓ Help", # New button
-        'language_btn': "🌐 Language", # New button
+        'settings_btn': "⚙️ Settings",
+        'help_btn': "❓ Help",
+        'language_btn': "🌐 Language",
+        'ask_free_ai': "💬 Ask AI",
+        'invite_friends': "👥 Invite Friends",
+        'subscribe_menu': "➕ Subscriptions",
     }
 }
 
@@ -705,6 +711,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            # Check if news with the same source_url already exists
             await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
             if await cur.fetchone():
                 return None # News already exists
@@ -882,10 +889,10 @@ class SubscriptionStates(StatesGroup):
 
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'settings_btn'), callback_data="settings_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"), InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'invite_friends'), callback_data="invite_friends"), InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'donate'), callback_data="donate"))
@@ -939,12 +946,10 @@ def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
 
 def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data="ai_summary_select_type_0"), InlineKeyboardButton(text=get_message(user_lang, 'classify_topics_btn'), callback_data="classify_topics_0")) # Dummy news_id for these
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'sentiment_trend_analysis_btn'), callback_data="sentiment_trend_analysis_0"), InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'comments_btn'), callback_data="comments_menu")) # Assuming comments_menu exists
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data="main_menu")) # Back to main menu
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"), InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_ai_media_btn'), callback_data="create_ai_media"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu")) # Back to main menu
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
@@ -1200,7 +1205,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'read_source_btn'), url=str(news_item.source_url)))
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_functions_btn'), callback_data=f"ai_news_functions_menu_{news_item.id}"))
-    # Fix: Use builder.row() instead of builder.row_width()
+    # Use builder.row() instead of builder.row_width() for consistent button layout
     keyboard_builder.row(*get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
     
     nav_buttons = []
@@ -1231,51 +1236,6 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     
     if user:
         await mark_news_as_viewed(user.id, news_item.id)
-
-@router.callback_query(F.data.startswith("react_news_"))
-async def handle_news_reaction(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.split('_')
-    reaction_type = parts[2]
-    news_id = int(parts[3])
-    user = await get_user_by_telegram_id(callback.from_user.id)
-    user_lang = user.language if user else 'uk'
-
-    if not user:
-        await callback.answer(get_message(user_lang, 'user_not_identified'), show_alert=True)
-        return
-
-    await add_user_news_reaction(user.id, news_id, reaction_type)
-
-    if reaction_type == 'delete':
-        await mark_news_as_viewed(user.id, news_id)
-        await callback.answer(get_message(user_lang, 'reaction_deleted'), show_alert=True)
-        
-        user_data = await state.get_data()
-        news_ids = user_data.get("news_ids", [])
-        current_index = user_data.get("current_news_index", 0)
-        
-        if news_id in news_ids:
-            news_ids.remove(news_id)
-            await state.update_data(news_ids=news_ids)
-            if current_index >= len(news_ids) and len(news_ids) > 0:
-                current_index = len(news_ids) - 1
-                await state.update_data(current_news_index=current_index)
-
-        if news_ids:
-            await send_news_to_user(callback.message.chat.id, news_ids[current_index], current_index, len(news_ids), state)
-        else:
-            await callback.message.edit_text(get_message(user_lang, 'no_more_news'), reply_markup=get_main_menu_keyboard(user_lang))
-    else:
-        await callback.answer(get_message(user_lang, 'reaction_saved'), show_alert=True)
-    
-    current_state_data = await state.get_data()
-    last_message_id = current_state_data.get('last_message_id')
-    if last_message_id:
-        try:
-            await bot.edit_message_reply_markup(chat_id=callback.message.chat.id, message_id=last_message_id, reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
-        except Exception as e:
-            logger.warning(f"Failed to edit message reply markup {last_message_id} after reaction: {e}")
-    await callback.answer()
 
 
 async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, chat_history: Optional[List[Dict]] = None, image_data: Optional[str] = None) -> Optional[str]:
@@ -1852,7 +1812,8 @@ async def generate_invite_code() -> str:
 async def create_invite(inviter_user_db_id: int) -> Optional[str]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
+        # Explicitly set row_factory for this cursor to ensure dictionary return
+        async with conn.cursor(row_factory=dict_row) as cur:
             invite_code = await generate_invite_code()
             try:
                 await cur.execute("""INSERT INTO invitations (inviter_user_id, invite_code, created_at, status) VALUES (%s, %s, CURRENT_TIMESTAMP, 'pending') RETURNING invite_code;""", (inviter_user_db_id, invite_code))
@@ -1903,7 +1864,7 @@ async def command_invite_handler(callback: CallbackQuery):
     
     invite_code = await create_invite(user.id)
     if invite_code:
-        # Fix: Await bot.get_me() to get the bot's username
+        # Await bot.get_me() to get the bot's username
         bot_info = await bot.get_me()
         invite_link = f"https://t.me/{bot_info.username}?start={invite_code}"
         await callback.message.edit_text(get_message(user_lang, 'your_invite_code', invite_code=invite_code, invite_link=hlink(get_message(user_lang, 'invite_link_label'), invite_link)), parse_mode=ParseMode.HTML, disable_web_page_preview=False, reply_markup=get_main_menu_keyboard(user_lang))
@@ -1991,7 +1952,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
     search_query = f"ціна {user_input} купити Україна"
-    if image_data_base664:
+    if image_data_base64:
         search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"])
