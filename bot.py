@@ -37,7 +37,7 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 # Експліцитний імпорт google_search, оскільки він не є глобально доступним
-import google_search 
+# Видалено: import google_search - оскільки це глобальний інструмент
 
 load_dotenv()
 
