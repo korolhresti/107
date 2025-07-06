@@ -871,9 +871,10 @@ class SubscriptionStates(StatesGroup):
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_sources'), callback_data="my_sources"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'settings_btn'), callback_data="settings_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"), InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'invite_friends'), callback_data="invite_friends"), InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'donate'), callback_data="donate"))
     return builder.as_markup()
@@ -926,12 +927,12 @@ def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
 
 def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_ai_media_btn'), callback_data="create_ai_media"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'analytics_menu_prompt'), callback_data="analytics_menu"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data="ai_summary_select_type_0"), InlineKeyboardButton(text=get_message(user_lang, 'classify_topics_btn'), callback_data="classify_topics_0")) # Dummy news_id for these
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'sentiment_trend_analysis_btn'), callback_data="sentiment_trend_analysis_0"), InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'comments_btn'), callback_data="comments_menu")) # Assuming comments_menu exists
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data="main_menu")) # Back to main menu
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
@@ -1843,11 +1844,13 @@ async def create_invite(inviter_user_db_id: int) -> Optional[str]:
 async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: str, chat_id: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
+        # Explicitly set row_factory for this cursor to ensure dictionary return
+        async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("""SELECT id, inviter_user_id FROM invitations WHERE invite_code = %s AND status = 'pending' AND used_at IS NULL;""", (invite_code,))
             invite_record = await cur.fetchone()
             if invite_record:
-                invite_id, inviter_user_db_id = invite_record
+                invite_id = invite_record['id']
+                inviter_user_db_id = invite_record['inviter_user_id']
                 await cur.execute("""UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;""", (new_user_db_id, invite_id))
                 
                 await cur.execute("UPDATE users SET premium_invite_count = premium_invite_count + 1, digest_invite_count = digest_invite_count + 1 WHERE id = %s RETURNING premium_invite_count, digest_invite_count;", (inviter_user_db_id,))
