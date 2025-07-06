@@ -36,7 +36,6 @@ import web_parser
 import telegram_parser
 import rss_parser
 import social_media_parser
-# Експліцитний імпорт google_search, оскільки він не є глобально доступним
 # Видалено: import google_search - оскільки це глобальний інструмент
 
 load_dotenv()
@@ -46,8 +45,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
-channel_ID = os.getenv("channel_ID") # Розгляньте можливість використання цього, якщо це числовий ID каналу
+# Оновлено: Використовуємо прямий channel_ID для публікації
+NEWS_CHANNEL_ID = -1002766273069 # Прямий числовий ID каналу для публікації
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
@@ -552,11 +551,11 @@ MESSAGES = {
         'german_lang': "🇩🇪 German",
         'spanish_lang': "🇪🇸 Spanish",
         'french_lang': "🇫🇷 French",
-        'ukrainian_lang': "🇺🇦 Ukrainian",
-        'italian_lang': "🇮🇹 Italian",
+        'ukrainian_lang': "🇺🇦 Українська",
+        'italian_lang': "🇮🇹 Італійська",
         'portuguese_lang': "🇵🇹 Portuguese",
-        'japanese_lang': "🇯🇵 Japanese",
-        'chinese_lang': "🇨🇳 Chinese",
+        'japanese_lang': "🇯🇵 Японська",
+        'chinese_lang': "🇨🇳 Китайська",
         'back_to_ai_btn': "⬅️ Back to AI",
         'ask_free_ai_btn': "💬 Ask AI",
         'news_channel_link_error': "Invalid channel link.",
@@ -1301,12 +1300,13 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
         caption_text += f"\n(Оригінальний URL зображення: {news_item.image_url})" # Додаємо оригінальний URL до тексту
 
     try:
-        # Додано disable_web_page_preview=True для уникнення помилок з неправильним типом контенту
-        msg = await bot.send_photo(chat_id=chat_id, photo=image_to_send, caption=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        # Видалено disable_web_page_preview=True
+        msg = await bot.send_photo(chat_id=chat_id, photo=image_to_send, caption=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.warning(f"Не вдалося надіслати фото для новини {news_id} з URL {image_to_send}: {e}. Відправляю текстове повідомлення.")
         # Якщо відправка фото не вдалася, надсилаємо просто текстове повідомлення
-        msg = await bot.send_message(chat_id=chat_id, text=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        # Видалено disable_web_page_preview=True
+        msg = await bot.send_message(chat_id=chat_id, text=caption_text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     
     if msg:
         await state.update_data(last_message_id=msg.message_id)
@@ -1779,23 +1779,8 @@ async def handle_report_fake_news(callback: CallbackQuery):
 
 async def send_news_to_channel(news_item: News):
     """Відправляє новину в Telegram-канал."""
-    if not NEWS_CHANNEL_LINK:
-        logger.error("Посилання на канал новин не налаштовано (NEWS_CHANNEL_LINK).")
-        return
-
-    channel_identifier = NEWS_CHANNEL_LINK
-    # Обробка різних форматів посилань на канал
-    if 't.me/' in NEWS_CHANNEL_LINK:
-        channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
-    
-    # Перевірка, чи це числовий ID каналу (починається з -100)
-    if channel_identifier.startswith('-100') and channel_identifier[1:].replace('-', '').isdigit():
-        pass # Це вже коректний числовий ID
-    elif channel_identifier.startswith('+'):
-        logger.error(get_message('uk', 'news_channel_link_error', link=NEWS_CHANNEL_LINK))
-        return
-    elif not channel_identifier.startswith('@'):
-        channel_identifier = '@' + channel_identifier # Додаємо '@' для публічних імен користувачів
+    # Використовуємо NEWS_CHANNEL_ID безпосередньо
+    channel_identifier = NEWS_CHANNEL_ID
 
     display_content = news_item.content
     # Скорочення контенту для публікації в канал, якщо він занадто довгий
@@ -1815,11 +1800,11 @@ async def send_news_to_channel(news_item: News):
         f"Опубліковано: {news_item.published_at.strftime('%d.%m.%Y %H:%M')}"
     )
     try:
-        # Додано disable_web_page_preview=True для уникнення помилок з неправильним типом контенту
+        # Видалено disable_web_page_preview=True
         if news_item.image_url:
-            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
         else:
-            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         logger.info(get_message('uk', 'news_published_success', title=news_item.title, identifier=channel_identifier))
         await mark_news_as_published_to_channel(news_item.id)
     except Exception as e:
