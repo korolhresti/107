@@ -117,6 +117,7 @@ class News(BaseModel):
     moderation_status: str = 'pending'
     expires_at: Optional[datetime] = None
     is_published_to_channel: Optional[bool] = False
+    ai_classified_topics: Optional[List[str]] = None # Added this back for filtering
 
 class User(BaseModel):
     id: Optional[int] = None
@@ -193,29 +194,29 @@ MESSAGES = {
         'prev_btn': "⬅️ Попередня",
         'next_btn': "➡️ Далі",
         'main_menu_btn': "⬅️ Меню",
-        'generating_ai_summary': "Генерую AI-резюме...", # Kept for digest summary, but not directly callable by user
-        'ai_summary_label': "AI-резюме:", # Kept for digest summary, but not directly callable by user
+        'generating_ai_summary': "Генерую AI-резюме...",
+        'ai_summary_label': "AI-резюме:",
         'select_translate_language': "Оберіть мову:",
         'translating_news': "Перекладаю...",
         'translation_label': "Переклад на {language_name}:",
         'generating_audio': "Генерую аудіо...",
         'audio_news_caption': "🔊 Новина: {title}",
         'audio_error': "Помилка генерації аудіо.",
-        'ask_news_ai_prompt': "Ваше запитання:", # Kept for ask_news_ai_ (premium)
+        'ask_news_ai_prompt': "Ваше запитання:",
         'processing_question': "Обробляю...",
         'ai_response_label': "Відповідь AI:",
         'ai_news_not_found': "Новина не знайдена.",
-        'ask_free_ai_prompt': "Ваше запитання до AI:", # Kept for ask_free_ai (premium)
+        'ask_free_ai_prompt': "Ваше запитання до AI:",
         'extracting_entities': "Витягую сутності...",
         'entities_label': "Сутності:",
         'explain_term_prompt': "Термін для пояснення:",
         'explaining_term': "Пояснюю...",
         'term_explanation_label': "Пояснення '{term}':",
-        'topics_label': "Теми:", # Kept for user subscriptions
+        'topics_label': "Теми:",
         'checking_facts': "Перевіряю факти...",
         'fact_check_label': "Перевірка фактів:",
-        'analyzing_sentiment': "Аналізую настрій...", # Kept for future use, but not directly callable by user
-        'sentiment_label': "Настрій:", # Kept for future use, but not directly callable by user
+        'analyzing_sentiment': "Аналізую настрій...",
+        'sentiment_label': "Настрій:",
         'detecting_bias': "Виявляю упередженість...",
         'bias_label': "Упередженість:",
         'generating_audience_summary': "Генерую резюме для аудиторії...",
@@ -374,6 +375,15 @@ MESSAGES = {
         'language_btn': "🌐 Мова",
         'invite_friends': "👥 Запросити друзів",
         'subscribe_menu': "➕ Підписки",
+        'english_lang': "English", # Added missing translation
+        'ukrainian_lang': "Українська", # Added missing translation
+        'polish_lang': "Polski", # Added missing translation
+        'german_lang': "Deutsch", # Added missing translation
+        'spanish_lang': "Español", # Added missing translation
+        'french_lang': "Français", # Added missing translation
+        'unknown_source': "Невідоме джерело", # Added missing translation
+        'bookmark_add_btn': "⭐️ Закладка", # Added missing translation
+        'action_done': "Дію виконано.", # Added missing translation
     },
     'en': {
         'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
@@ -593,11 +603,21 @@ MESSAGES = {
         'language_btn': "🌐 Language",
         'invite_friends': "👥 Invite Friends",
         'subscribe_menu': "➕ Subscriptions",
+        'english_lang': "English",
+        'ukrainian_lang': "Ukrainian",
+        'polish_lang': "Polish",
+        'german_lang': "German",
+        'spanish_lang': "Spanish",
+        'french_lang': "French",
+        'unknown_source': "Unknown Source",
+        'bookmark_add_btn': "⭐️ Bookmark",
+        'action_done': "Action done.",
     }
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
-    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, f"MISSING_TRANSLATION_{key}").format(**kwargs)
+    # Fallback to 'uk' if user_lang is not found, then to a default string if key is missing
+    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, f"").format(**kwargs) # Changed fallback to empty string
 
 def normalize_url(url: str) -> str:
     """Normalizes a URL to ensure consistent comparison."""
@@ -695,9 +715,21 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
             # Otherwise (from automatic parsing/YouTube generation), it's pending.
             moderation_status = 'approved' if news_data.get('user_id_for_source') is not None else 'pending'
             
+            # Extract and classify topics using AI if not provided and it's a new news item
+            ai_classified_topics = news_data.get('ai_classified_topics')
+            if ai_classified_topics is None:
+                try:
+                    # Use Gemini to classify topics
+                    topics_raw = await call_gemini_api(f"Класифікуй цю новину за 3-5 ключовими темами українською мовою, перелічи їх через кому: {news_data['title']}. {news_data['content']}", user_telegram_id=None) # No user_telegram_id for background task
+                    if topics_raw:
+                        ai_classified_topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
+                except Exception as e:
+                    logger.error(f"Failed to classify topics for news {news_data['title']}: {e}")
+                    ai_classified_topics = [] # Default to empty list on failure
+
             await cur.execute(
-                """INSERT INTO news (source_id, title, content, source_url, normalized_source_url, image_url, published_at, moderation_status, is_published_to_channel) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
-                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), normalized_source_url, str(news_data.get('image_url')) if news_data.get('image_url') else None, news_data['published_at'], moderation_status, False)
+                """INSERT INTO news (source_id, title, content, source_url, normalized_source_url, image_url, published_at, moderation_status, is_published_to_channel, ai_classified_topics) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
+                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), normalized_source_url, str(news_data.get('image_url')) if news_data.get('image_url') else None, news_data['published_at'], moderation_status, False, ai_classified_topics)
             )
             return News(**await cur.fetchone())
 
@@ -719,14 +751,12 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
                 params.append(start_datetime)
             
             if topics:
-                topic_conditions = []
-                for topic in topics:
-                    # Use the '?' operator for checking if a JSONB array contains a specific string element
-                    topic_conditions.append("n.ai_classified_topics ? %s")
-                    params.append(topic) # Add topic directly as a parameter
-                
-                if topic_conditions:
-                    query += f" AND ({' OR '.join(topic_conditions)})"
+                # Corrected operator for TEXT[] array overlap
+                # Use ANY for checking if any element in the news's topics array is in the user's topics list
+                # Or use && (overlap operator) if you want to check if the two arrays have any common elements
+                # Assuming ai_classified_topics is TEXT[] and topics is List[str]
+                query += " AND n.ai_classified_topics && %s::text[]"
+                params.append(topics) # Pass the list directly for TEXT[] comparison
 
             query += " ORDER BY n.published_at DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
@@ -1194,10 +1224,10 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
         except Exception as e:
             logger.warning(f"Failed to send photo for news {news_id} from URL {news_item.image_url}: {e}. Sending with placeholder.")
             placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
-            msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text + f"\n(Original image URL: {news_item.image_url})", reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
+            msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text + f"\n(Original image URL: {news_item.image_url})", reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     else:
         placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
-        msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
+        msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     
     if msg:
         await state.update_data(last_message_id=msg.message_id)
@@ -1290,7 +1320,7 @@ async def handle_translate_to_language(callback: CallbackQuery, state: FSMContex
     news_id = int(parts[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
-    language_names = {"en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French", "uk": "Ukrainian"}
+    language_names = {"en": get_message(user_lang, 'english_lang'), "pl": get_message(user_lang, 'polish_lang'), "de": get_message(user_lang, 'german_lang'), "es": get_message(user_lang, 'spanish_lang'), "fr": get_message(user_lang, 'french_lang'), "uk": get_message(user_lang, 'ukrainian_lang')}
     language_name = language_names.get(lang_code, "selected language")
     news_item = await get_news_by_id(news_id)
     
@@ -2329,10 +2359,10 @@ async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Note: ai_summary and ai_classified_topics fields are removed from News model
-            # and thus from this update statement.
-            params = [news.source_id, news.title, news.content, str(news.source_url), normalize_url(str(news.source_url)), str(news.image_url) if news.image_url else None, news.published_at, news.moderation_status, news.expires_at, news.is_published_to_channel, news_id]
-            await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, normalized_source_url = %s, image_url = %s, published_at = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s WHERE id = %s RETURNING *;""", tuple(params))
+            # Note: ai_summary and ai_classified_topics fields are handled separately or removed from direct update.
+            # Ensure ai_classified_topics is passed as a list for TEXT[] column
+            params = [news.source_id, news.title, news.content, str(news.source_url), normalize_url(str(news.source_url)), str(news.image_url) if news.image_url else None, news.published_at, news.moderation_status, news.expires_at, news.is_published_to_channel, news.ai_classified_topics, news_id]
+            await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, normalized_source_url = %s, image_url = %s, published_at = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s, ai_classified_topics = %s WHERE id = %s RETURNING *;""", tuple(params))
             updated_rec = await cur.fetchone()
             if not updated_rec:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
