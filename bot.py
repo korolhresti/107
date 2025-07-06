@@ -31,14 +31,13 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 from croniter import croniter
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled # Import YouTube Transcript API
 
 import web_parser
 import telegram_parser
 import rss_parser
 import social_media_parser
 
-# google_search is a global tool, no explicit import needed here
+# Removed: from tools import google_search - google_search is a global tool
 
 load_dotenv()
 
@@ -48,10 +47,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
 NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
+channel_ID = os.getenv("channel_ID")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-MONOBANK_CARD_NUMBER = "4441111153021484" # Monobank card for donations
-HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6" # Link for "Help Buy"
-HELP_SELL_BOT_LINK = "https://t.me/BigmoneycreateBot" # Link for "Help Sell"
+MONOBANK_CARD_NUMBER = "4441111153021484"
+HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
+HELP_SELL_BOT_LINK = "https://t.me/BigmoneycreateBot"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -131,8 +131,17 @@ class User(BaseModel):
     language: Optional[str] = 'uk'
     auto_notifications: Optional[bool] = False
     digest_frequency: Optional[str] = 'daily'
+    safe_mode: Optional[bool] = False
+    current_feed_id: Optional[int] = None
     is_premium: Optional[bool] = False
     premium_expires_at: Optional[datetime] = None
+    level: Optional[int] = 1
+    badges: Optional[List[str]] = []
+    inviter_id: Optional[int] = None
+    view_mode: Optional[str] = 'detailed'
+    premium_invite_count: Optional[int] = 0
+    digest_invite_count: Optional[int] = 0
+    is_pro: Optional[bool] = False
     ai_requests_today: Optional[int] = 0
     ai_last_request_date: Optional[datetime] = None
 
@@ -176,7 +185,7 @@ MESSAGES = {
         'first_news': "Це перша новина.",
         'error_start_menu': "Помилка. Почніть з /menu.",
         'ai_functions_prompt': "AI-функції:",
-        'ai_function_premium_only': "Ця функція доступна лише для преміум-користувачів. Отримайте преміум, запросивши 5 друзів!",
+        'ai_function_premium_only': "Лише для преміум.",
         'news_title_label': "Заголовок:",
         'news_content_label': "Зміст:",
         'published_at_label': "Опубліковано:",
@@ -254,7 +263,7 @@ MESSAGES = {
         'daily_digest_header': "📰 Ваш щоденний AI-дайджест:",
         'daily_digest_entry': "<b>{idx}. {title}</b>\n{summary}\n🔗 <a href='{source_url}'>Читати</a>\n\n",
         'no_news_for_digest': "Немає новин для дайджесту.",
-        'ai_rate_limit_exceeded': "Забагато AI-запитів. Використано {count}/{limit}. Спробуйте завтра або отримайте преміум-доступ, запросивши 5 друзів!",
+        'ai_rate_limit_exceeded': "Забагато AI-запитів. Використано {count}/{limit}. Спробуйте завтра або преміум.",
         'what_new_digest_header': "👋 Привіт! Ви пропустили {count} новин. Дайджест:",
         'what_new_digest_footer': "\n\nВсі новини? Натисніть '📰 Мої новини'.",
         'cancel_btn': "Скасувати",
@@ -265,9 +274,9 @@ MESSAGES = {
         'ai_summary_btn': "📝 AI-резюме",
         'translate_btn': "🌐 Перекласти",
         'ask_ai_btn': "❓ Запитати AI",
-        'extract_entities_btn': "🧑‍🤝‍🧑 Сутності (Преміум)",
-        'explain_term_btn': "❓ Пояснити (Преміум)",
-        'classify_topics_btn': "🏷️ Теми (Преміум)",
+        'extract_entities_btn': "🧑‍🤝‍🧑 Сутності",
+        'explain_term_btn': "❓ Пояснити",
+        'classify_topics_btn': "🏷️ Теми",
         'listen_news_btn': "🔊 Прослухати",
         'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
@@ -339,12 +348,11 @@ MESSAGES = {
         'youtube_url_prompt': "Посилання на YouTube-відео:",
         'youtube_processing': "Обробляю YouTube...",
         'youtube_summary_label': "<b>YouTube Новина:</b>\n{summary}",
-        'youtube_no_transcript': "Не вдалося отримати транскрипт для цього відео. Можливо, транскрипти відключені або недоступні.",
         'filtered_channel_prompt': "Назва каналу та теми (через кому):",
         'filtered_channel_creating': "Створюю канал '{channel_name}' з темами: {topics}...",
-        'filtered_channel_created': "Канал '{channel_name}' 'створено'! Це імітація функції. У реальному застосуванні вам потрібно було б створити канал вручну та додати бота як адміністратора, щоб він публікував новини за вашими темами.",
+        'filtered_channel_created': "Канал '{channel_name}' 'створено'! Додайте бота як адміна, щоб він публікував новини за вашими темами.",
         'ai_media_creating': "Створюю AI-медіа...",
-        'ai_media_created': "Ваше AI-медіа '{media_name}' 'створено'! Це імітація функції. У реальному застосуванні це б включало створення AI-текстів, публікацію їх у власному каналі, надання аналітики та щоденних дайджестів.",
+        'ai_media_created': "Ваше AI-медіа '{media_name}' 'створено'!",
         'analytics_menu_prompt': "Аналітика:",
         'infographics_btn': "📈 Інфографіка",
         'trust_index_btn': "⚖️ Індекс довіри",
@@ -366,7 +374,7 @@ MESSAGES = {
         'reaction_delete': "❌ Видалити",
         'reaction_saved': "Реакція збережена!",
         'reaction_deleted': "Новину видалено.",
-        'premium_granted': "Вітаємо! Преміум-доступ отримано! Тепер ви можете використовувати всі AI-функції без обмежень!",
+        'premium_granted': "Вітаємо! Преміум-доступ отримано!",
         'digest_granted': "Вітаємо! Безкоштовний щоденний AI-дайджест отримано!",
         'donate_message': "Дякуємо за підтримку! Картка Monobank: <code>{card_number}</code> ☕",
         'my_sources_header': "Ваші джерела:",
@@ -387,8 +395,8 @@ MESSAGES = {
         'pro_tier_info': "Pro-рівень: доступ до API та розширені інтеграції. Зв'яжіться з адміном.",
         'help_sell_btn': "🤝 Допоможи продати",
         'help_buy_btn': "🛒 Допоможи купити",
-        'help_sell_message': "Зверніться до нашого бота-помічника з продажу: {bot_link}",
-        'help_buy_message': "Перегляньте канал з найкращими пропозиціями: {channel_link}"
+        'help_sell_message': "Contact our sales assistant bot: {bot_link}",
+        'help_buy_message': "Check the channel with best offers: {channel_link}"
     },
     'en': {
         'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
@@ -418,7 +426,7 @@ MESSAGES = {
         'first_news': "First news.",
         'error_start_menu': "Error. Start with /menu.",
         'ai_functions_prompt': "AI Functions:",
-        'ai_function_premium_only': "This feature is for premium users only. Get premium by inviting 5 friends!",
+        'ai_function_premium_only': "Premium only.",
         'news_title_label': "Title:",
         'news_content_label': "Content:",
         'published_at_label': "Published:",
@@ -496,7 +504,7 @@ MESSAGES = {
         'daily_digest_header': "📰 Your daily AI News Digest:",
         'daily_digest_entry': "<b>{idx}. {title}</b>\n{summary}\n🔗 <a href='{source_url}'>Read</a>\n\n",
         'no_news_for_digest': "No news for digest.",
-        'ai_rate_limit_exceeded': "Too many AI requests. Used {count}/{limit}. Try tomorrow or get premium access by inviting 5 friends!",
+        'ai_rate_limit_exceeded': "Too many AI requests. Used {count}/{limit}. Try tomorrow or premium.",
         'what_new_digest_header': "👋 Hello! You missed {count} news. Digest:",
         'what_new_digest_footer': "\n\nSee all news? Click '📰 My News'.",
         'cancel_btn': "Cancel",
@@ -507,9 +515,9 @@ MESSAGES = {
         'ai_summary_btn': "📝 AI Summary",
         'translate_btn': "🌐 Translate",
         'ask_ai_btn': "❓ Ask AI",
-        'extract_entities_btn': "🧑‍🤝‍🧑 Entities (Premium)",
-        'explain_term_btn': "❓ Explain (Premium)",
-        'classify_topics_btn': "🏷️ Topics (Premium)",
+        'extract_entities_btn': "🧑‍🤝‍🧑 Entities",
+        'explain_term_btn': "❓ Explain",
+        'classify_topics_btn': "🏷️ Topics",
         'listen_news_btn': "🔊 Listen",
         'next_ai_page_btn': "➡️ Next (AI)",
         'fact_check_btn': "✅ Fact Check (Premium)",
@@ -581,12 +589,11 @@ MESSAGES = {
         'youtube_url_prompt': "YouTube video link:",
         'youtube_processing': "Processing YouTube...",
         'youtube_summary_label': "<b>YouTube News:</b>\n{summary}",
-        'youtube_no_transcript': "Could not get transcript for this video. Transcripts might be disabled or unavailable.",
         'filtered_channel_prompt': "Channel name and topics (comma-separated):",
         'filtered_channel_creating': "Creating channel '{channel_name}' with topics: {topics}...",
-        'filtered_channel_created': "Channel '{channel_name}' 'created'! This is a simulated feature. In a real application, you would need to manually create the channel and add the bot as an administrator for it to publish news based on your topics.",
+        'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
         'ai_media_creating': "Creating AI media...",
-        'ai_media_created': "Your AI media '{media_name}' 'created'! This is a simulated feature. In a real application, this would involve generating AI texts, publishing them to a dedicated channel, providing analytics, and daily digests.",
+        'ai_media_created': "Your AI media '{media_name}' 'created'!",
         'analytics_menu_prompt': "Analytics:",
         'infographics_btn': "📈 Infographics",
         'trust_index_btn': "⚖️ Trust Index",
@@ -608,7 +615,7 @@ MESSAGES = {
         'reaction_delete': "❌ Delete",
         'reaction_saved': "Reaction saved!",
         'reaction_deleted': "News deleted.",
-        'premium_granted': "Congrats! Premium access granted! You can now use all AI features without limits!",
+        'premium_granted': "Congrats! Premium access granted!",
         'digest_granted': "Congrats! Free daily AI digest granted!",
         'donate_message': "Thanks for support! Monobank card: <code>{card_number}</code> ☕",
         'my_sources_header': "Your sources:",
@@ -664,7 +671,7 @@ async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT id, telegram_id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency, is_premium, premium_expires_at, ai_requests_today, ai_last_request_date FROM users WHERE telegram_id = %s", (telegram_id,))
+            await cur.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
             user_record = await cur.fetchone()
             return User(**user_record) if user_record else None
 
@@ -1223,7 +1230,7 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
 
     if user_telegram_id:
         user = await get_user_by_telegram_id(user_telegram_id)
-        if user and not user.is_premium: # Removed is_pro as it's not in the simplified User model
+        if user and not user.is_premium and not user.is_pro:
             today = datetime.now(timezone.utc).date()
             if user.ai_last_request_date and user.ai_last_request_date.date() != today:
                 await update_user_ai_request_count(user.id, 0, datetime.now(timezone.utc))
@@ -1264,7 +1271,7 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
 
 async def check_premium_access(user_telegram_id: int) -> bool:
     user = await get_user_by_telegram_id(user_telegram_id)
-    return user and user.is_premium
+    return user and (user.is_premium or user.is_pro)
 
 @router.callback_query(F.data.startswith("ai_summary_select_type_"))
 async def handle_ai_summary_select_type(callback: CallbackQuery, state: FSMContext):
@@ -1430,7 +1437,7 @@ async def handle_extract_entities(callback: CallbackQuery):
         await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
         return
     await callback.message.edit_text(get_message(user_lang, 'extracting_entities'))
-    entities = await call_gemini_api(f"Витягни всі ключові сутності (імена, організації, місця, дати, ключові терміни) з новини українською. Надай їх у форматі списку з коротким описом кожної сутності: {news_item.content}", user_telegram_id=callback.from_user.id)
+    entities = await call_gemini_api(f"Витягни ключові сутності з новини українською. Перелічи їх через кому: {news_item.content}", user_telegram_id=callback.from_user.id)
     await callback.message.edit_text(get_message(user_lang, 'entities_label') + f"\n{entities}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
 
@@ -1468,7 +1475,7 @@ async def process_term_explanation(message: Message, state: FSMContext):
         await state.clear()
         return
     await message.answer(get_message(user_lang, 'explaining_term'))
-    explanation = await call_gemini_api(f"Поясни термін '{term}' у контексті новини українською, надаючи його визначення, значення в новині та можливі наслідки: {news_item.content}", user_telegram_id=message.from_user.id)
+    explanation = await call_gemini_api(f"Поясни термін '{term}' у контексті новини українською: {news_item.content}", user_telegram_id=message.from_user.id)
     await message.answer(get_message(user_lang, 'term_explanation_label', term=term) + f"\n{explanation}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await state.clear()
 
@@ -1485,7 +1492,7 @@ async def handle_classify_topics(callback: CallbackQuery):
         await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
         return
     await callback.message.edit_text(get_message(user_lang, 'classifying_topics'))
-    topics = await call_gemini_api(f"Класифікуй новину за 5-7 детальними основними темами українською, перелічи їх через кому, наприклад: 'Політика, Економіка, Технології, Соціальні питання, Екологія, Міжнародні відносини'. Вкажи також підтеми, якщо вони є: {news_item.content}", user_telegram_id=callback.from_user.id)
+    topics = await call_gemini_api(f"Класифікуй новину за 3-5 основними темами українською, перелічи через кому: {news_item.content}", user_telegram_id=callback.from_user.id)
     await callback.message.edit_text(get_message(user_lang, 'topics_label') + f"\n{topics}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
 
@@ -1502,7 +1509,7 @@ async def handle_fact_check_news(callback: CallbackQuery):
         await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
         return
     await callback.message.edit_text(get_message(user_lang, 'checking_facts'))
-    fact_check = await call_gemini_api(f"Виконай глибоку перевірку фактів для новини українською. Проаналізуй кожен ключовий факт, вкажи, чи є він підтвердженим, спростованим або потребує додаткової перевірки. Якщо є неточності або маніпуляції, детально їх опиши та, якщо можливо, наведи посилання на авторитетні джерела, що підтверджують або спростовують інформацію: {news_item.content}", user_telegram_id=callback.from_user.id)
+    fact_check = await call_gemini_api(f"Виконай перевірку фактів для новини українською. Вкажи неточності або маніпуляції. Якщо є, наведи джерела: {news_item.content}", user_telegram_id=callback.from_user.id)
     await callback.message.edit_text(get_message(user_lang, 'fact_check_label') + f"\n{fact_check}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
 
@@ -1680,7 +1687,7 @@ async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: s
                 invite_id, inviter_user_db_id = invite_record
                 await cur.execute("""UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;""", (new_user_db_id, invite_id))
                 
-                await cur.execute("UPDATE users SET premium_invite_count = premium_invite_count + 1 WHERE id = %s RETURNING premium_invite_count;", (inviter_user_db_id,))
+                await cur.execute("UPDATE users SET premium_invite_count = premium_invite_count + 1, digest_invite_count = digest_invite_count + 1 WHERE id = %s RETURNING premium_invite_count, digest_invite_count;", (inviter_user_db_id,))
                 inviter_updated_counts = await cur.fetchone()
 
                 if inviter_updated_counts:
@@ -1690,6 +1697,12 @@ async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: s
                         if inviter_telegram_user:
                             await bot.send_message(chat_id=inviter_telegram_user.telegram_id, text=get_message(user_lang, 'premium_granted'))
                     
+                    if inviter_updated_counts['digest_invite_count'] >= 10:
+                        await update_user_digest_frequency(inviter_user_db_id, 'daily')
+                        inviter_telegram_user = await get_user_by_telegram_id(inviter_user_db_id)
+                        if inviter_telegram_user:
+                            await bot.send_message(chat_id=inviter_telegram_user.telegram_id, text=get_message(user_lang, 'digest_granted'))
+                
                 await conn.commit()
 
 @router.callback_query(F.data == "invite_friends")
@@ -1740,9 +1753,9 @@ async def process_expert_question(message: Message, state: FSMContext):
     
     prompt = ""
     if expert_type == "portnikov":
-        prompt = f"Відповідай як відомий український журналіст Віталій Портников, аналізуючи політичні та соціальні події, їхні причини та можливі наслідки. Надай глибокий, розгорнутий коментар: {user_question}"
+        prompt = f"Відповідай як відомий український журналіст Віталій Портников, аналізуючи політичні та соціальні події: {user_question}"
     elif expert_type == "libsits":
-        prompt = f"Відповідай як відомий український економіст Ігор Лібсіц, аналізуючи економічні тенденції, їхній вплив на Україну та світ, а також можливі економічні прогнози та рекомендації: {user_question}"
+        prompt = f"Відповідай як відомий український економіст Ігор Лібсіц, аналізуючи економічні тенденції та їх наслідки: {user_question}"
     
     await message.answer(get_message(user_lang, 'processing_question'))
     ai_response = await call_gemini_api(prompt, user_telegram_id=message.from_user.id)
@@ -1782,12 +1795,11 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
 
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
-    # Use google_search to get real-time price info
     search_query = f"ціна {user_input} купити Україна"
     if image_data_base64:
-        search_query = f"розпізнати товар та ціна {user_input} купити Україна" # Enhance query if image is present
+        search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
-    search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"buy {user_input} Ukraine"])
+    search_results = await asyncio.to_thread(google_search.search, queries=[search_query])
     
     price_context = []
     for res_set in search_results:
@@ -1795,7 +1807,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
             if res.snippet:
                 price_context.append(res.snippet)
     
-    context_text = "\n\n".join(price_context[:3]) # Use top 3 search results as context
+    context_text = "\n\n".join(price_context[:3])
 
     prompt = f"Проаналізуй опис товару '{user_input}' та, якщо є, зображення. Використай наступну інформацію з пошуку: {context_text}. Розрахуй приблизну ціну в UAH, запропонуй можливі місця придбання та вкажи фактори, що впливають на ціну, та можливі аналоги. Будь максимально точним."
     price_analysis_result = await call_gemini_api(prompt, user_telegram_id=message.from_user.id, image_data=image_data_base64)
@@ -1897,35 +1909,18 @@ async def process_youtube_url(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'youtube_processing'))
     
-    video_id = None
-    if "v=" in youtube_url:
-        video_id = youtube_url.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in youtube_url:
-        video_id = youtube_url.split("youtu.be/")[1].split("?")[0]
-
-    transcript_text = ""
-    if video_id:
-        try:
-            transcript_list = await asyncio.to_thread(YouTubeTranscriptApi.get_transcript, video_id, languages=['uk', 'en'])
-            transcript_text = " ".join([entry['text'] for entry in transcript_list])
-            logger.info(f"Successfully fetched transcript for YouTube video {video_id}.")
-        except (NoTranscriptFound, TranscriptsDisabled) as e:
-            logger.warning(f"No transcript found or transcripts disabled for {youtube_url}: {e}")
-            await message.answer(get_message(user_lang, 'youtube_no_transcript'))
-            await state.clear()
-            return
-        except Exception as e:
-            logger.error(f"Error fetching YouTube transcript for {youtube_url}: {e}", exc_info=True)
-            await message.answer(get_message(user_lang, 'youtube_no_transcript'))
-            await state.clear()
-            return
+    search_query = f"YouTube video summary {youtube_url}"
+    search_results = await asyncio.to_thread(google_search.search, queries=[search_query])
     
-    if not transcript_text:
-        await message.answer(get_message(user_lang, 'youtube_no_transcript'))
-        await state.clear()
-        return
+    transcript_context = []
+    for res_set in search_results:
+        for res in res_set.results:
+            if res.snippet:
+                transcript_context.append(res.snippet)
+    
+    context_text = "\n\n".join(transcript_context[:2])
 
-    prompt = f"На основі цього транскрипту YouTube відео, згенеруй новину українською мовою, включаючи заголовок, короткий зміст та аналітику. Транскрипт: {transcript_text}"
+    prompt = f"На основі цієї інформації про YouTube відео, згенеруй новину українською мовою, включаючи заголовок, короткий зміст та аналітику. Інформація: {context_text}"
     ai_news_content = await call_gemini_api(prompt, user_telegram_id=message.from_user.id)
     
     title = ai_news_content.split('\n')[0] if ai_news_content and '\n' in ai_news_content else "YouTube Відео Новина"
@@ -1934,7 +1929,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
         "title": title,
         "content": ai_news_content,
         "source_url": youtube_url,
-        "image_url": f"https://img.youtube.com/vi/{video_id}/0.jpg" if video_id else "https://placehold.co/600x400/FF0000/FFFFFF?text=YouTube",
+        "image_url": f"https://img.youtube.com/vi/{youtube_url.split('v=')[-1].split('&')[0]}/0.jpg",
         "published_at": datetime.now(timezone.utc),
         "source_type": "youtube",
         "user_id_for_source": None
@@ -2024,7 +2019,7 @@ async def handle_infographics(callback: CallbackQuery):
     
     context_text = "\n\n".join(data_context[:5])
     
-    prompt = f"На основі цих даних, опиши детальну інфографіку, що візуалізує ключові тренди та взаємозв'язки. Опис має включати: 1) Заголовок інфографіки. 2) Опис основних графіків/діаграм (наприклад, лінійний графік зростання ВВП, стовпчаста діаграма розподілу інвестицій). 3) Ключові показники та їх значення. 4) Висновки та прогнози, які можна зробити з інфографіки. Використовуй дані: {context_text}"
+    prompt = f"На основі цих даних, опиши інфографіку, що візуалізує ключові тренди та взаємозв'язки. Опис має бути детальний, ніби ти пояснюєш, що зображено на інфографіці, які дані використано та які висновки можна зробити. Використовуй дані: {context_text}"
     infographics_description = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
     
     await callback.message.edit_text(get_message(user_lang, 'infographics_result', result=infographics_description), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -2052,7 +2047,7 @@ async def handle_trust_index(callback: CallbackQuery):
     
     context_text = "\n\n".join(trust_context[:5])
 
-    prompt = f"На основі загальновідомої інформації та даних про репутацію джерел, розроби концепцію 'Індексу довіри до джерел'. Опиши, як би він розраховувався (наприклад, на основі кількості перевірених фактів, репутації, незалежності, відгуків користувачів). Включи приклади, які джерела вважаються більш/менш надійними та чому, посилаючись на загальнодоступні рейтинги. Використовуй контекст: {context_text}"
+    prompt = f"На основі загальновідомої інформації та даних про репутацію джерел, опиши 'Індекс довіри до джерел'. Включи приклади, які джерела вважаються більш/менш надійними та чому. Використовуй контекст: {context_text}"
     trust_index_result = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
     
     await callback.message.edit_text(get_message(user_lang, 'trust_index_result', result=trust_index_result), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -2068,8 +2063,7 @@ async def handle_long_term_connections(callback: CallbackQuery):
         "historical events influencing current economy",
         "long term political trends Ukraine",
         "історичні передумови сучасних подій",
-        "взаємозв'язок світових криз",
-        "impact of past policies on present"
+        "взаємозв'язок світових криз"
     ]
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
@@ -2081,7 +2075,7 @@ async def handle_long_term_connections(callback: CallbackQuery):
     
     context_text = "\n\n".join(historical_context[:5])
 
-    prompt = f"Знайди та детально опиши довгострокові зв'язки між глобальними та локальними подіями. Наприклад, як певні історичні економічні рішення (наприклад, енергетична політика) впливають на поточну геополітичну ситуацію або як технологічні прориви минулого формують сучасні соціальні структури. Наведи конкретні приклади та поясни механізми цих зв'язків. Використовуй контекст: {context_text}"
+    prompt = f"Знайди довгострокові зв'язки між подіями та опиши їх. Наприклад, як минулі економічні рішення впливають на поточну ситуацію. Використовуй контекст: {context_text}"
     connections_result = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
     
     await callback.message.edit_text(get_message(user_lang, 'long_term_connections_result', result=connections_result), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -2098,8 +2092,7 @@ async def handle_ai_prediction(callback: CallbackQuery):
         "global economic forecasts next 5 years",
         "climate change impact predictions",
         "прогнози розвитку технологій",
-        "майбутнє світової економіки",
-        "геополітичні прогнози"
+        "майбутнє світової економіки"
     ]
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
@@ -2111,7 +2104,7 @@ async def handle_ai_prediction(callback: CallbackQuery):
     
     context_text = "\n\n".join(prediction_context[:5])
 
-    prompt = f"Зроби детальний прогноз 'Що буде далі' на основі поточних подій та аналітики. Прогноз має бути реалістичним, обґрунтованим та включати різні сценарії (оптимістичний, реалістичний, песимістичний) для ключових сфер (наприклад, економіка, технології, геополітика). Поясни фактори, що впливають на кожен сценарій. Використовуй контекст: {context_text}"
+    prompt = f"Зроби прогноз 'Що буде далі' на основі поточних подій та аналітики. Прогноз має бути реалістичним і обґрунтованим. Використовуй контекст: {context_text}"
     prediction_result = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
     
     await callback.message.edit_text(get_message(user_lang, 'ai_prediction_result', result=prediction_result), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -2329,16 +2322,16 @@ async def read_root():
 async def read_dashboard(api_key: str = Depends(get_api_key)):
     with open("dashboard.html", "r", encoding="utf-8") as f: return f.read()
 
-@app.get("/api/admin/users")
-async def get_admin_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+@app.get("/users", response_class=HTMLResponse)
+async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT id, telegram_id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency, is_premium, premium_expires_at, ai_requests_today, ai_last_request_date FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
-            return [User(**u) for u in await cur.fetchall()]
+            await cur.execute("SELECT id, telegram_id, username, first_name, last_name, created_at, is_admin, last_active, language, auto_notifications, digest_frequency, safe_mode, current_feed_id, is_premium, premium_expires_at, level, badges, inviter_id, view_mode, premium_invite_count, digest_invite_count, is_pro, ai_requests_today, ai_last_request_date FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            return {"users": await cur.fetchall()}
 
-@app.get("/api/admin/reports")
-async def get_admin_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+@app.get("/reports", response_class=HTMLResponse)
+async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:

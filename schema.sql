@@ -1,197 +1,121 @@
--- patch_schema.sql - Скрипт для оновлення існуючої схеми бази даних, якщо schema.sql не був виконаний повністю.
-
--- Додавання/оновлення таблиці users
+-- Таблиця користувачів
 CREATE TABLE IF NOT EXISTS users (
-    id BIGSERIAL PRIMARY KEY, -- Змінено з SERIAL на BIGSERIAL для підтримки великих ID Telegram
-    telegram_id BIGINT UNIQUE, -- Залишається BIGINT
-    username VARCHAR(255),
-    first_name VARCHAR(255),
-    last_name VARCHAR(255),
+    id SERIAL PRIMARY KEY,
+    telegram_id BIGINT UNIQUE NOT NULL,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_admin BOOLEAN DEFAULT FALSE,
     last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    language VARCHAR(10) DEFAULT 'uk',
+    language TEXT DEFAULT 'uk',
     auto_notifications BOOLEAN DEFAULT FALSE,
-    digest_frequency VARCHAR(50) DEFAULT 'daily',
+    digest_frequency TEXT DEFAULT 'daily',
     safe_mode BOOLEAN DEFAULT FALSE,
-    current_feed_id INT,
+    current_feed_id INTEGER, -- Може бути NULL
     is_premium BOOLEAN DEFAULT FALSE,
-    premium_expires_at TIMESTAMP WITH TIME ZONE,
-    level INT DEFAULT 1,
-    badges JSONB DEFAULT '[]'::JSONB,
-    inviter_id BIGINT,
-    email VARCHAR(255) UNIQUE,
-    view_mode VARCHAR(50) DEFAULT 'detailed',
-    onboarding_completed BOOLEAN DEFAULT FALSE, -- NEW: Для відстеження онбордингу
-    ai_usage_count INT DEFAULT 0, -- NEW: Кількість використань AI функцій
-    last_ai_usage TIMESTAMP WITH TIME ZONE, -- NEW: Час останнього використання AI
-    total_sources_added INT DEFAULT 0, -- NEW: Кількість доданих джерел
-    total_reports_sent INT DEFAULT 0, -- NEW: Кількість надісланих репортів
-    total_ai_feedback_given INT DEFAULT 0, -- NEW: Кількість наданих AI фідбеків
-    ai_feedback_positive_count INT DEFAULT 0, -- NEW: Кількість позитивних AI фідбеків
-    ai_feedback_negative_count INT DEFAULT 0, -- NEW: Кількість негативних AI фідбеків
-    news_reactions JSONB DEFAULT '{}'::JSONB -- NEW: Зберігання реакцій користувача на новини (JSONB для гнучкості)
+    premium_expires_at TIMESTAMP WITH TIME ZONE, -- Може бути NULL
+    level INTEGER DEFAULT 1,
+    badges JSONB DEFAULT '[]'::jsonb, -- Зберігаємо як JSONB для гнучкості
+    inviter_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- Може бути NULL
+    view_mode TEXT DEFAULT 'detailed',
+    premium_invite_count INTEGER DEFAULT 0,
+    digest_invite_count INTEGER DEFAULT 0,
+    is_pro BOOLEAN DEFAULT FALSE,
+    ai_requests_today INTEGER DEFAULT 0,
+    ai_last_request_date DATE DEFAULT CURRENT_DATE
 );
 
--- Додавання відсутніх стовпців до таблиці users
--- (Якщо ці стовпці вже існують, ALTER TABLE ADD COLUMN IF NOT EXISTS просто пропустить їх)
-DO $$ BEGIN
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_usage_count INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ai_usage TIMESTAMP WITH TIME ZONE;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS total_sources_added INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS total_reports_sent INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS total_ai_feedback_given INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_feedback_positive_count INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_feedback_negative_count INT DEFAULT 0;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS news_reactions JSONB DEFAULT '{}'::JSONB;
-END $$;
-
-
--- Додавання/оновлення таблиці sources
+-- Таблиця джерел новин
 CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id), -- Хто додав джерело (може бути NULL для системних)
-    source_name VARCHAR(255) NOT NULL,
-    source_url VARCHAR(2048) UNIQUE NOT NULL,
-    source_type VARCHAR(50) NOT NULL, -- 'web', 'rss', 'telegram', 'social_media'
-    status VARCHAR(50) DEFAULT 'active', -- 'active', 'inactive', 'paused'
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, -- Може бути NULL для системних джерел
+    source_name TEXT NOT NULL,
+    source_url TEXT UNIQUE NOT NULL,
+    source_type TEXT NOT NULL, -- 'web', 'rss', 'telegram', 'social_media'
+    status TEXT DEFAULT 'active', -- 'active', 'inactive'
     added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_parsed TIMESTAMP WITH TIME ZONE,
-    parse_frequency VARCHAR(50) DEFAULT 'hourly' -- 'hourly', 'daily', 'weekly'
+    last_parsed TIMESTAMP WITH TIME ZONE -- Може бути NULL
 );
 
--- Додавання/оновлення таблиці news
+-- Таблиця новин
 CREATE TABLE IF NOT EXISTS news (
     id SERIAL PRIMARY KEY,
-    source_id INT REFERENCES sources(id),
+    source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
-    content TEXT,
-    source_url VARCHAR(2048) UNIQUE NOT NULL,
-    image_url VARCHAR(2048),
-    published_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    ai_summary TEXT,
-    ai_classified_topics JSONB,
-    moderation_status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    expires_at TIMESTAMP WITH TIME ZONE, -- Дата, після якої новина вважається неактуальною
-    is_published_to_channel BOOLEAN DEFAULT FALSE -- NEW: Відстежує, чи була новина опублікована в Telegram-каналі
+    content TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    image_url TEXT, -- Може бути NULL
+    ai_summary TEXT, -- Може бути NULL
+    ai_classified_topics JSONB, -- Зберігаємо як JSONB для гнучкості списку тем
+    published_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    moderation_status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    expires_at TIMESTAMP WITH TIME ZONE, -- Може бути NULL (для новин з обмеженим терміном дії)
+    is_published_to_channel BOOLEAN DEFAULT FALSE
 );
 
--- Додавання відсутнього стовпця до таблиці news
-DO $$ BEGIN
-    ALTER TABLE news ADD COLUMN IF NOT EXISTS is_published_to_channel BOOLEAN DEFAULT FALSE;
-END $$;
-
--- Додавання/оновлення таблиці user_news_views
+-- Таблиця переглядів новин користувачами (для відстеження прочитаних новин)
 CREATE TABLE IF NOT EXISTS user_news_views (
-    user_id BIGINT REFERENCES users(id),
-    news_id INT REFERENCES news(id),
-    viewed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, news_id)
-);
-
--- Додавання/оновлення таблиці blocks
-CREATE TABLE IF NOT EXISTS blocks (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    block_type VARCHAR(50) NOT NULL, -- 'keyword', 'source', 'topic'
-    value VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (user_id, block_type, value)
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    news_id INTEGER REFERENCES news(id) ON DELETE CASCADE,
+    viewed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, news_id) -- Забезпечує унікальність перегляду для пари користувач-новина
 );
 
--- Додавання/оновлення таблиці bookmarks
+-- Таблиця реакцій користувачів на новини
+CREATE TABLE IF NOT EXISTS user_news_reactions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    news_id INTEGER REFERENCES news(id) ON DELETE CASCADE,
+    reaction_type TEXT NOT NULL, -- 'interesting', 'not_much', 'delete'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, news_id) -- Дозволяє лише одну реакцію на новину від користувача
+);
+
+-- Таблиця закладок користувачів
 CREATE TABLE IF NOT EXISTS bookmarks (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    news_id INT REFERENCES news(id),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    news_id INTEGER REFERENCES news(id) ON DELETE CASCADE,
     bookmarked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (user_id, news_id)
+    UNIQUE(user_id, news_id)
 );
 
--- Додавання/оновлення таблиці user_stats
-CREATE TABLE IF NOT EXISTS user_stats (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id) UNIQUE,
-    news_read_count INT DEFAULT 0,
-    ai_requests_count INT DEFAULT 0,
-    sources_added_count INT DEFAULT 0,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Додавання/оновлення таблиці comments
-CREATE TABLE IF NOT EXISTS comments (
-    id SERIAL PRIMARY KEY,
-    news_id INT REFERENCES news(id),
-    user_id BIGINT REFERENCES users(id),
-    parent_comment_id INT REFERENCES comments(id), -- Для гілок коментарів
-    comment_text TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'active' -- 'active', 'moderated', 'deleted'
-);
-
--- Додавання/оновлення таблиці reports
+-- Таблиця скарг/репортів
 CREATE TABLE IF NOT EXISTS reports (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    target_type VARCHAR(50) NOT NULL, -- 'news', 'comment', 'user'
-    target_id INT, -- ID новини, коментаря або користувача
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL, -- 'news', 'comment', etc.
+    target_id INTEGER NOT NULL,
     reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'pending' -- 'pending', 'resolved', 'rejected'
+    status TEXT DEFAULT 'pending' -- 'pending', 'resolved', 'rejected'
 );
 
--- Додавання/оновлення таблиці feedback
-CREATE TABLE IF NOT EXISTS feedback (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    feedback_text TEXT NOT NULL,
-    rating INT, -- Наприклад, від 1 до 5
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'new' -- 'new', 'reviewed', 'archived'
-);
-
--- Додавання/оновлення таблиці invitations
+-- Таблиця запрошень
 CREATE TABLE IF NOT EXISTS invitations (
     id SERIAL PRIMARY KEY,
-    inviter_user_id BIGINT REFERENCES users(id),
-    invite_code VARCHAR(255) UNIQUE NOT NULL,
+    inviter_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    invite_code VARCHAR(8) UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    used_at TIMESTAMP WITH TIME ZONE,
-    status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'accepted', 'rejected'
-    invitee_telegram_id BIGINT -- Telegram ID користувача, який використав запрошення
+    used_at TIMESTAMP WITH TIME ZONE, -- Може бути NULL, якщо запрошення ще не використано
+    status TEXT DEFAULT 'pending', -- 'pending', 'accepted', 'revoked'
+    invitee_telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE SET NULL -- Змінено на telegram_id
 );
 
--- Додавання/оновлення таблиці source_stats
+-- Таблиця статистики джерел
 CREATE TABLE IF NOT EXISTS source_stats (
-    id SERIAL PRIMARY KEY,
-    source_id INT REFERENCES sources(id) UNIQUE,
-    publication_count INT DEFAULT 0,
-    avg_rating REAL DEFAULT 0.0,
-    report_count INT DEFAULT 0,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_id INTEGER PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    publication_count INTEGER DEFAULT 0,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- NEW: Таблиця для зберігання фідбеку по AI відповідям
-CREATE TABLE IF NOT EXISTS ai_feedback (
+-- Таблиця підписок користувачів на теми
+CREATE TABLE IF NOT EXISTS user_subscriptions (
     id SERIAL PRIMARY KEY,
-    user_id BIGINT REFERENCES users(id),
-    news_id INT REFERENCES news(id), -- Може бути NULL для вільних AI запитів
-    ai_function VARCHAR(255) NOT NULL, -- Назва функції (наприклад, 'summary', 'translate', 'ask_ai')
-    rating BOOLEAN NOT NULL, -- TRUE для 👍, FALSE для 👎
-    feedback_text TEXT, -- Додатковий коментар
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    topic TEXT NOT NULL,
+    subscribed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, topic) -- Забезпечує унікальність підписки на тему для користувача
 );
-
--- Створення або перестворення індексів. IF NOT EXISTS тут особливо корисний.
-CREATE INDEX IF NOT EXISTS idx_news_published_expires_moderation ON news (published_at DESC, expires_at, moderation_status);
-CREATE INDEX IF NOT EXISTS idx_blocks_user_type_value ON blocks (user_id, block_type, value);
-CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks (user_id);
-CREATE INDEX IF NOT EXISTS idx_user_stats_user_id ON user_stats (user_id);
-CREATE INDEX IF NOT EXISTS idx_comments_news_id ON comments (news_id);
-CREATE INDEX IF NOT EXISTS idx_user_news_views_user_news_id ON user_news_views (user_id, news_id);
-CREATE INDEX IF NOT EXISTS idx_reports_user_id_target_id ON reports (user_id, target_id);
-CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback (user_id);
-CREATE INDEX IF NOT EXISTS idx_invitations_inviter_user_id ON invitations (inviter_user_id);
-CREATE INDEX IF NOT EXISTS idx_ai_feedback_user_id ON ai_feedback (user_id);
-CREATE INDEX IF NOT EXISTS idx_ai_feedback_news_id ON ai_feedback (news_id);
