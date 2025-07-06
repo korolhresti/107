@@ -170,8 +170,7 @@ MESSAGES = {
                       "/invite - Запросити\n"
                       "/subscribe - Підписки\n"
                       "/donate - Донат ☕\n"
-                      "<b>AI:</b> під новиною.\n"
-                      "<b>AI-медіа:</b> /ai_media_menu"),
+                      "<b>AI Media:</b> /ai_media_menu"),
         'action_cancelled': "Скасовано. Оберіть дію:",
         'add_source_prompt': "Надішліть URL джерела:",
         'invalid_url': "Невірний URL.",
@@ -202,11 +201,11 @@ MESSAGES = {
         'generating_audio': "Генерую аудіо...",
         'audio_news_caption': "🔊 Новина: {title}",
         'audio_error': "Помилка генерації аудіо.",
-        'ask_news_ai_prompt': "Ваше запитання:",
+        'ask_news_ai_prompt': "Ваше запитання:", # Kept for ask_news_ai_ (premium)
         'processing_question': "Обробляю...",
         'ai_response_label': "Відповідь AI:",
         'ai_news_not_found': "Новина не знайдена.",
-        'ask_free_ai_prompt': "Ваше запитання до AI:",
+        'ask_free_ai_prompt': "Ваше запитання до AI:", # Kept for ask_free_ai (premium)
         'extracting_entities': "Витягую сутності...",
         'entities_label': "Сутності:",
         'explain_term_prompt': "Термін для пояснення:",
@@ -270,28 +269,16 @@ MESSAGES = {
         'toggle_safe_mode_btn': "🔒 Безпечний режим",
         'set_view_mode_btn': "👁️ Режим перегляду",
         'translate_btn': "🌐 Перекласти",
-        'ask_ai_btn': "❓ Запитати AI",
         'extract_entities_btn': "🧑‍🤝‍🧑 Сутності",
         'explain_term_btn': "❓ Пояснити",
         'listen_news_btn': "🔊 Прослухати",
-        'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
         'bias_detection_btn': "🔍 Упередженість (Преміум)",
         'audience_summary_btn': "📝 Резюме для аудиторії (Преміум)",
         'historical_analogues_btn': "📜 Аналоги (Преміум)",
         'impact_analysis_btn': "💥 Вплив (Преміум)",
         'monetary_impact_btn': "💰 Грошовий аналіз (Преміум)",
-        'prev_ai_page_btn': "⬅️ Назад (AI)",
-        'bookmark_add_btn': "❤️ Обране",
-        'comments_btn': "💬 Коментарі",
-        'english_lang': "🇬🇧 Англійська",
-        'polish_lang': "🇵🇱 Польська",
-        'german_lang': "🇩🇪 Німецька",
-        'spanish_lang': "🇪🇸 Іспанська",
-        'french_lang': "🇫🇷 Французька",
-        'ukrainian_lang': "🇺🇦 Українська",
         'back_to_ai_btn': "⬅️ До AI",
-        'ask_free_ai_btn': "💬 Запитай AI",
         'news_channel_link_error': "Невірне посилання на канал.",
         'news_channel_link_warning': "Невірний формат посилання.",
         'news_published_success': "Новина '{title}' опублікована в каналі {identifier}.",
@@ -383,10 +370,8 @@ MESSAGES = {
         'help_buy_btn': "🛒 Допомогти купити",
         'help_sell_message': "Зв'яжіться з нашим ботом-помічником з продажу: {bot_link}",
         'help_buy_message': "Перегляньте канал з найкращими пропозиціями: {channel_link}",
-        'settings_btn': "⚙️ Налаштування",
         'help_btn': "❓ Допомога",
         'language_btn': "🌐 Мова",
-        'ask_free_ai': "💬 Запитати AI",
         'invite_friends': "👥 Запросити друзів",
         'subscribe_menu': "➕ Підписки",
     },
@@ -404,7 +389,6 @@ MESSAGES = {
                       "/invite - Invite\n"
                       "/subscribe - Subscriptions\n"
                       "/donate - Donate ☕\n"
-                      "<b>AI:</b> below news.\n"
                       "<b>AI Media:</b> /ai_media_menu"),
         'action_cancelled': "Cancelled. Choose action:",
         'add_source_prompt': "Send source URL:",
@@ -504,28 +488,16 @@ MESSAGES = {
         'toggle_safe_mode_btn': "🔒 Safe Mode",
         'set_view_mode_btn': "👁️ View Mode",
         'translate_btn': "🌐 Translate",
-        'ask_ai_btn': "❓ Ask AI",
         'extract_entities_btn': "🧑‍🤝‍🧑 Entities",
         'explain_term_btn': "❓ Explain",
         'listen_news_btn': "🔊 Listen",
-        'next_ai_page_btn': "➡️ Next (AI)",
         'fact_check_btn': "✅ Fact Check (Premium)",
         'bias_detection_btn': "🔍 Bias Detection (Premium)",
         'audience_summary_btn': "📝 Audience Summary (Premium)",
         'historical_analogues_btn': "📜 Analogues (Premium)",
         'impact_analysis_btn': "💥 Impact Analysis (Premium)",
         'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
-        'prev_ai_page_btn': "⬅️ Back (AI)",
-        'bookmark_add_btn': "❤️ Bookmark",
-        'comments_btn': "💬 Comments",
-        'english_lang': "🇬🇧 Англійська",
-        'polish_lang': "🇵🇱 Польська",
-        'german_lang': "🇩🇪 Німецька",
-        'spanish_lang': "🇪🇸 Іспанська",
-        'french_lang': "🇫🇷 Французька",
-        'ukrainian_lang': "🇺🇦 Українська",
         'back_to_ai_btn': "⬅️ До AI",
-        'ask_free_ai_btn': "💬 Запитай AI",
         'news_channel_link_error': "Invalid channel link.",
         'news_channel_link_warning': "Invalid link format.",
         'news_published_success': "News '{title}' published to channel {identifier}.",
@@ -617,10 +589,8 @@ MESSAGES = {
         'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
         'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'settings_btn': "⚙️ Settings",
         'help_btn': "❓ Help",
         'language_btn': "🌐 Language",
-        'ask_free_ai': "💬 Ask AI",
         'invite_friends': "👥 Invite Friends",
         'subscribe_menu': "➕ Subscriptions",
     }
@@ -720,7 +690,10 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 )
                 source_id = (await cur.fetchone())['id']
 
-            moderation_status = 'approved' if news_data.get('user_id_for_source') is None else 'pending'
+            # Changed logic: News from user-added sources are approved, others pending
+            # If user_id_for_source is provided (meaning it's added by a user), it's approved.
+            # Otherwise (from automatic parsing/YouTube generation), it's pending.
+            moderation_status = 'approved' if news_data.get('user_id_for_source') is not None else 'pending'
             
             await cur.execute(
                 """INSERT INTO news (source_id, title, content, source_url, normalized_source_url, image_url, published_at, moderation_status, is_published_to_channel) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
@@ -882,7 +855,7 @@ class SubscriptionStates(StatesGroup):
 
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'settings_btn'), callback_data="settings_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
+    # Removed 'settings_btn' and 'ask_free_ai_btn'
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
@@ -902,13 +875,12 @@ def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardM
 
 def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if page == 0:
-        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'ask_ai_btn'), callback_data=f"ask_news_ai_{news_id}"))
-        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'next_ai_page_btn'), callback_data=f"ai_functions_page_1_{news_id}"))
-    elif page == 1:
-        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'extract_entities_btn'), callback_data=f"extract_entities_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'explain_term_btn'), callback_data=f"explain_term_{news_id}"))
-        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'fact_check_btn'), callback_data=f"fact_check_news_{news_id}"))
-        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'prev_ai_page_btn'), callback_data=f"ai_functions_page_0_{news_id}"))
+    # Removed 'ask_ai_btn' and 'next_ai_page_btn' and the entire page 1 logic
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'extract_entities_btn'), callback_data=f"extract_entities_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'explain_term_btn'), callback_data=f"explain_term_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'fact_check_btn'), callback_data=f"fact_check_news_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'bookmark_add_btn'), callback_data=f"bookmark_news_add_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'report_fake_news_btn'), callback_data=f"report_fake_news_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
     return builder.as_markup()
@@ -1019,6 +991,13 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'main_menu_prompt'), reply_markup=get_main_menu_keyboard(user_lang))
+    await callback.answer()
+
+@router.callback_query(F.data == "help_menu")
+async def callback_help_menu(callback: CallbackQuery, state: FSMContext):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    await callback.message.edit_text(get_message(user_lang, 'help_text'), parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard(user_lang))
     await callback.answer()
 
 @router.callback_query(F.data == "add_source")
@@ -1284,7 +1263,7 @@ async def check_premium_access(user_telegram_id: int) -> bool:
 async def handle_ai_news_functions_menu(callback: CallbackQuery):
     parts = callback.data.split('_')
     news_id = int(parts[-1])
-    page = int(parts[-2]) if len(parts) > 4 else 0
+    page = int(parts[-2]) if len(parts) > 4 else 0 # This page parameter is now mostly vestigial
     
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1353,77 +1332,8 @@ async def handle_listen_news(callback: CallbackQuery):
         await callback.message.edit_text(get_message(user_lang, 'audio_error'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("ask_news_ai_"))
-async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
-    news_id = int(callback.data.split('_')[3])
-    user = await get_user_by_telegram_id(callback.from_user.id)
-    user_lang = user.language if user else 'uk'
-    await state.update_data(waiting_for_news_id_for_ai=news_id)
-    await callback.message.edit_text(get_message(user_lang, 'ask_news_ai_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
-    await state.set_state(AIAssistant.waiting_for_question)
-    await callback.answer()
-
-@router.message(AIAssistant.waiting_for_question)
-async def process_ai_question(message: Message, state: FSMContext):
-    user_question = message.text
-    user_data = await state.get_data()
-    news_id = user_data.get("waiting_for_news_id_for_ai")
-    user = await get_user_by_telegram_id(message.from_user.id)
-    user_lang = user.language if user else 'uk'
-    
-    if not news_id:
-        await message.answer(get_message(user_lang, 'ai_news_not_found'), reply_markup=get_main_menu_keyboard(user_lang))
-        await state.clear()
-        return
-    
-    news_item = await get_news_by_id(news_id)
-    if not news_item:
-        await message.answer(get_message(user_lang, 'news_not_found'), reply_markup=get_main_menu_keyboard(user_lang))
-        await state.clear()
-        return
-    
-    await message.answer(get_message(user_lang, 'processing_question'))
-    
-    chat_history = user_data.get('ai_chat_history', [])
-    chat_history.append({"role": "user", "text": user_question})
-    
-    prompt = f"Новина: {news_item.content}\n\nЗапитання: {user_question}\n\nВідповідь:"
-    ai_response = await call_gemini_api(prompt, user_telegram_id=message.from_user.id, chat_history=chat_history)
-    
-    chat_history.append({"role": "model", "text": ai_response})
-    await state.update_data(ai_chat_history=chat_history)
-    
-    await message.answer(get_message(user_lang, 'ai_response_label') + f"\n{ai_response}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
-    await state.clear()
-
-@router.callback_query(F.data == "ask_free_ai")
-async def handle_ask_free_ai(callback: CallbackQuery, state: FSMContext):
-    user = await get_user_by_telegram_id(callback.from_user.id)
-    user_lang = user.language if user else 'uk'
-    await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
-    await state.set_state(AIAssistant.waiting_for_free_question)
-    await state.update_data(ai_chat_history=[])
-    await callback.answer()
-
-@router.message(AIAssistant.waiting_for_free_question)
-async def process_free_ai_question(message: Message, state: FSMContext):
-    user_question = message.text
-    user = await get_user_by_telegram_id(message.from_user.id)
-    user_lang = user.language if user else 'uk'
-    
-    await message.answer(get_message(user_lang, 'processing_question'))
-    
-    user_data = await state.get_data()
-    chat_history = user_data.get('ai_chat_history', [])
-    chat_history.append({"role": "user", "text": user_question})
-    
-    ai_response = await call_gemini_api(f"Відповідай як новинний аналітик на запитання: {user_question}", user_telegram_id=message.from_user.id, chat_history=chat_history)
-    
-    chat_history.append({"role": "model", "text": ai_response})
-    await state.update_data(ai_chat_history=chat_history)
-    
-    await message.answer(get_message(user_lang, 'ai_response_label') + f"\n{ai_response}", reply_markup=get_main_menu_keyboard(user_lang))
-    await state.clear()
+# Removed ask_news_ai and process_ai_question as per request
+# Removed ask_free_ai and process_free_ai_question as per request
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
@@ -1611,12 +1521,13 @@ async def send_news_to_channel(news_item: News):
     try:
         if news_item.image_url:
             try:
+                # Attempt to send photo. If it fails, log and send as text.
                 await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
             except Exception as photo_e:
                 logger.error(f"Failed to send photo for news {news_item.id} to channel {channel_identifier} from URL {news_item.image_url}: {photo_e}. Sending message without photo.", exc_info=True)
-                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
+                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         else:
-            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
+            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         
         logger.info(get_message('uk', 'news_published_success', title=news_item.title, identifier=channel_identifier))
         await mark_news_as_published_to_channel(news_item.id)
@@ -1665,6 +1576,7 @@ async def fetch_and_post_news_task():
                     logger.info(f"Social Media parser for {source['source_url']} found no new news.")
             
             if news_data:
+                # Set user_id_for_source to None for automatically parsed news so they go to 'pending' moderation
                 news_data.update({'source_id': source['id'], 'source_name': source['source_name'], 'source_type': source['source_type'], 'user_id_for_source': None})
                 added_news_item = await add_news_to_db(news_data)
                 if added_news_item:
@@ -1985,7 +1897,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
         "image_url": image_url,
         "published_at": datetime.now(timezone.utc),
         "source_type": "youtube",
-        "user_id_for_source": None
+        "user_id_for_source": None # This will make it pending for moderation
     }
     added_news = await add_news_to_db(youtube_news_data)
     if added_news:
@@ -2309,7 +2221,7 @@ async def on_startup():
 async def on_shutdown():
     if db_pool:
         await db_pool.close()
-        logger.info("DB pool closed.")
+    logger.info("DB pool closed.")
     await bot.session.close()
     logger.info("FastAPI app shut down.")
 
