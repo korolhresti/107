@@ -38,6 +38,97 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 
+from src.parsers import rss_parser, web_parser
+from database import get_db_pool
+from datetime import datetime, timezone
+from aiogram.utils.markdown import hlink
+
+setup_scheduler(bot)
+
+
+
+async def fetch_and_post_news_task(bot):
+    pool = await get_db_pool()
+
+    async with pool.acquire() as conn:
+        sources = await conn.fetch("SELECT * FROM sources WHERE is_active = TRUE")
+
+        for source in sources:
+            source_id = source['id']
+            source_url = source['url']
+            source_type = source['source_type']
+
+            try:
+                if source_type == 'rss':
+                    news_list = await rss_parser.parse_rss_feed(source_url)
+                elif source_type == 'web':
+                    parsed_article = await web_parser.parse_website(source_url)
+                    news_list = [parsed_article] if parsed_article else []
+                else:
+                    print(f"[!] Невідомий тип джерела: {source_type}")
+                    continue
+
+                for news in news_list:
+                    if not news:
+                        continue
+
+                    source_link = news.get('source_url')
+                    # Перевірка на дублі
+                    existing = await conn.fetchval(
+                        "SELECT 1 FROM news WHERE source_url = $1",
+                        source_link
+                    )
+                    if existing:
+                        continue  # дубль
+
+                    await conn.execute(
+                        """
+                        INSERT INTO news (title, content, image_url, source_url, published_at, source_id, lang)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        news['title'],
+                        news['content'],
+                        news['image_url'],
+                        news['source_url'],
+                        news['published_at'],
+                        source_id,
+                        news.get('lang', 'uk')
+                    )
+
+                    # Автоматично надіслати користувачам (опціонально)
+                    # отримати список користувачів
+                    users = await conn.fetch("SELECT user_id FROM users WHERE is_premium = TRUE")
+
+                    for user in users:
+                        try:
+                            caption = f"📰 <b>{news['title']}</b>\n\n"
+                            caption += f"{news['content'][:500]}...\n\n"
+                            caption += f"{hlink('🔗 Читати повністю', news['source_url'])}"
+
+                            if news.get('image_url'):
+                                await bot.send_photo(user['user_id'], photo=news['image_url'], caption=caption, parse_mode="HTML")
+                            else:
+                                await bot.send_message(user['user_id'], caption, parse_mode="HTML")
+
+                        except Exception as e:
+                            print(f"[!] Не вдалося надіслати новину користувачу {user['user_id']}: {e}")
+
+            except Exception as e:
+                print(f"[!] Помилка при обробці джерела {source_url}: {e}")
+
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from tasks.fetch_news import fetch_and_post_news_task
+
+scheduler = AsyncIOScheduler()
+
+def setup_scheduler(bot):
+    scheduler.add_job(fetch_and_post_news_task, 'interval', hours=24, args=[bot])
+    scheduler.start()
+
+
+
+
 load_dotenv()
 
 API_TOKEN = os.getenv("BOT_TOKEN")
