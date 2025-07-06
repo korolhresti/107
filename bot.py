@@ -8,6 +8,7 @@ import random
 import io
 import base64
 import time
+from typing import List, Optional, Dict, Any
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode
@@ -43,7 +44,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069") # Встановлено Channel ID
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
@@ -593,19 +594,19 @@ MESSAGES = {
         'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
         'ai_media_creating': "Creating AI media...",
         'ai_media_created': "Your AI media '{media_name}' 'created'!",
-        'analytics_menu_prompt': "Analytics:",
-        'infographics_btn': "📈 Infographics",
-        'trust_index_btn': "⚖️ Trust Index",
-        'long_term_connections_btn': "🔗 Connections",
-        'ai_prediction_btn': "🔮 AI Prediction",
-        'infographics_generating': "Generating infographics...",
-        'infographics_result': "<b>Infographics:</b>\n{result}",
-        'trust_index_calculating': "Calculating trust index...",
-        'trust_index_result': "<b>Trust Index:</b>\n{result}",
-        'long_term_connections_generating': "Searching connections...",
-        'long_term_connections_result': "<b>Long-Term Connections:</b>\n{result}",
-        'ai_prediction_generating': "Generating AI prediction...",
-        'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
+        'analytics_menu_prompt': "Аналітика:",
+        'infographics_btn': "📈 Інфографіка",
+        'trust_index_btn': "⚖️ Індекс довіри",
+        'long_term_connections_btn': "🔗 Зв'язки",
+        'ai_prediction_btn': "🔮 AI-прогноз",
+        'infographics_generating': "Генерую інфографіку...",
+        'infographics_result': "<b>Інфографіка:</b>\n{result}",
+        'trust_index_calculating': "Розраховую індекс довіри...",
+        'trust_index_result': "<b>Індекс довіри:</b>\n{result}",
+        'long_term_connections_generating': "Шукаю зв'язки...",
+        'long_term_connections_result': "<b>Довгострокові зв'язки:</b>\n{result}",
+        'ai_prediction_generating': "Генерую AI-прогноз...",
+        'ai_prediction_result': "<b>AI-прогноз:</b>\n{result}",
         'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
         'onboarding_step_2': "Step 2: View news '📰 My News'.",
         'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
@@ -1684,16 +1685,17 @@ async def send_news_to_channel(news_item: News):
         return
     
     channel_identifier = NEWS_CHANNEL_LINK
-    if 't.me/' in NEWS_CHANNEL_LINK:
-        channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
+    # The channel ID is already in the correct format (-100...) so no need to modify it
+    # if 't.me/' in NEWS_CHANNEL_LINK:
+    #     channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
     
-    if channel_identifier.startswith('-100') and channel_identifier[1:].replace('-', '').isdigit():
-        pass
-    elif channel_identifier.startswith('+'):
-        logger.error(get_message('uk', 'news_channel_link_error', link=NEWS_CHANNEL_LINK))
-        return
-    elif not channel_identifier.startswith('@'):
-        channel_identifier = '@' + channel_identifier
+    # if channel_identifier.startswith('-100') and channel_identifier[1:].replace('-', '').isdigit():
+    #     pass
+    # elif channel_identifier.startswith('+'):
+    #     logger.error(get_message('uk', 'news_channel_link_error', link=NEWS_CHANNEL_LINK))
+    #     return
+    # elif not channel_identifier.startswith('@'):
+    #     channel_identifier = '@' + channel_identifier
     
     display_content = news_item.content
     if len(display_content) > 250:
