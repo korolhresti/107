@@ -530,14 +530,14 @@ MESSAGES = {
         'prev_ai_page_btn': "⬅️ Back (AI)",
         'bookmark_add_btn': "❤️ Bookmark",
         'comments_btn': "💬 Comments",
-        'english_lang': "🇬🇧 English",
-        'polish_lang': "🇵🇱 Polish",
-        'german_lang': "🇩🇪 German",
-        'spanish_lang': "🇪🇸 Spanish",
-        'french_lang': "🇫🇷 French",
-        'ukrainian_lang': "🇺🇦 Ukrainian",
-        'back_to_ai_btn': "⬅️ Back to AI",
-        'ask_free_ai_btn': "💬 Ask AI",
+        'english_lang': "🇬🇧 Англійська",
+        'polish_lang': "🇵🇱 Польська",
+        'german_lang': "🇩🇪 Німецька",
+        'spanish_lang': "🇪🇸 Іспанська",
+        'french_lang': "🇫🇷 Французька",
+        'ukrainian_lang': "🇺🇦 Українська",
+        'back_to_ai_btn': "⬅️ До AI",
+        'ask_free_ai_btn': "💬 Запитай AI",
         'news_channel_link_error': "Invalid channel link.",
         'news_channel_link_warning': "Invalid link format.",
         'news_published_success': "News '{title}' published to channel {identifier}.",
@@ -1187,7 +1187,8 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'read_source_btn'), url=str(news_item.source_url)))
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_functions_btn'), callback_data=f"ai_news_functions_menu_{news_item.id}"))
-    keyboard_builder.row_width(3, *get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
+    # Fix: Use builder.row() instead of builder.row_width()
+    keyboard_builder.row(*get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
     
     nav_buttons = []
     if current_index > 0:
@@ -1878,7 +1879,9 @@ async def command_invite_handler(callback: CallbackQuery):
     
     invite_code = await create_invite(user.id)
     if invite_code:
-        invite_link = f"https://t.me/{bot.me.username}?start={invite_code}"
+        # Fix: Await bot.get_me() to get the bot's username
+        bot_info = await bot.get_me()
+        invite_link = f"https://t.me/{bot_info.username}?start={invite_code}"
         await callback.message.edit_text(get_message(user_lang, 'your_invite_code', invite_code=invite_code, invite_link=hlink(get_message(user_lang, 'invite_link_label'), invite_link)), parse_mode=ParseMode.HTML, disable_web_page_preview=False, reply_markup=get_main_menu_keyboard(user_lang))
     else:
         await callback.message.edit_text(get_message(user_lang, 'invite_error'), reply_markup=get_main_menu_keyboard(user_lang))
