@@ -3,7 +3,7 @@ import logging
 import psycopg
 from psycopg_pool import AsyncConnectionPool
 from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional # Added Optional here
 
 load_dotenv()
 
@@ -60,5 +60,4 @@ if __name__ == "__main__":
         finally:
             if db_pool:
                 await db_pool.close()
-
     asyncio.run(test_db_connection())
