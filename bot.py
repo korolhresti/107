@@ -9,7 +9,6 @@ import io
 import base64
 import time
 from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.enums import ParseMode
@@ -38,9 +37,6 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 
-from database import get_db_pool
-from aiogram.utils.markdown import hlink
-
 load_dotenv()
 
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -48,7 +44,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069")
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069") # Встановлено Channel ID
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
@@ -116,11 +112,12 @@ class News(BaseModel):
     content: str
     source_url: HttpUrl
     image_url: Optional[HttpUrl] = None
+    ai_summary: Optional[str] = None
+    ai_classified_topics: Optional[List[str]] = None
     published_at: datetime
     moderation_status: str = 'pending'
     expires_at: Optional[datetime] = None
     is_published_to_channel: Optional[bool] = False
-    ai_classified_topics: Optional[List[str]] = None
 
 class User(BaseModel):
     id: Optional[int] = None
@@ -168,13 +165,16 @@ MESSAGES = {
                       "/menu - Меню\n"
                       "/cancel - Скасувати\n"
                       "/my_news - Мої новини\n"
+                      "/add_source - Додати джерело\n"
                       "/my_sources - Мої джерела\n"
                       "/ask_expert - Експерт\n"
                       "/invite - Запросити\n"
                       "/subscribe - Підписки\n"
                       "/donate - Донат ☕\n"
-                      "<b>AI Media:</b> /ai_media_menu"),
+                      "<b>AI:</b> під новиною.\n"
+                      "<b>AI-медіа:</b> /ai_media_menu"),
         'action_cancelled': "Скасовано. Оберіть дію:",
+        'add_source_prompt': "Надішліть URL джерела:",
         'invalid_url': "Невірний URL.",
         'source_url_not_found': "URL джерела не знайдено.",
         'source_added_success': "Джерело '{source_url}' додано!",
@@ -213,6 +213,7 @@ MESSAGES = {
         'explain_term_prompt': "Термін для пояснення:",
         'explaining_term': "Пояснюю...",
         'term_explanation_label': "Пояснення '{term}':",
+        'classifying_topics': "Класифікую теми...",
         'topics_label': "Теми:",
         'checking_facts': "Перевіряю факти...",
         'fact_check_label': "Перевірка фактів:",
@@ -270,17 +271,32 @@ MESSAGES = {
         'set_digest_frequency_btn': "🔄 Частота дайджесту",
         'toggle_safe_mode_btn': "🔒 Безпечний режим",
         'set_view_mode_btn': "👁️ Режим перегляду",
+        'ai_summary_btn': "📝 AI-резюме",
         'translate_btn': "🌐 Перекласти",
+        'ask_ai_btn': "❓ Запитати AI",
         'extract_entities_btn': "🧑‍🤝‍🧑 Сутності",
         'explain_term_btn': "❓ Пояснити",
+        'classify_topics_btn': "🏷️ Теми",
         'listen_news_btn': "🔊 Прослухати",
+        'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
+        'sentiment_trend_analysis_btn': "📊 AI Настрій", # Updated text for AI Media menu
         'bias_detection_btn': "🔍 Упередженість (Преміум)",
         'audience_summary_btn': "📝 Резюме для аудиторії (Преміум)",
         'historical_analogues_btn': "📜 Аналоги (Преміум)",
         'impact_analysis_btn': "💥 Вплив (Преміум)",
         'monetary_impact_btn': "💰 Грошовий аналіз (Преміум)",
+        'prev_ai_page_btn': "⬅️ Назад (AI)",
+        'bookmark_add_btn': "❤️ Обране",
+        'comments_btn': "💬 Коментарі", # New button
+        'english_lang': "🇬🇧 Англійська",
+        'polish_lang': "🇵🇱 Польська",
+        'german_lang': "🇩🇪 Німецька",
+        'spanish_lang': "🇪🇸 Іспанська",
+        'french_lang': "🇫🇷 Французька",
+        'ukrainian_lang': "🇺🇦 Українська",
         'back_to_ai_btn': "⬅️ До AI",
+        'ask_free_ai_btn': "💬 Запитай AI",
         'news_channel_link_error': "Невірне посилання на канал.",
         'news_channel_link_warning': "Невірний формат посилання.",
         'news_published_success': "Новина '{title}' опублікована в каналі {identifier}.",
@@ -308,18 +324,27 @@ MESSAGES = {
         'moderation_all_done': "Усі новини оброблено.",
         'moderation_no_more_news': "Більше новин немає.",
         'moderation_first_news': "Це перша новина.",
+        'ai_smart_summary_prompt': "Оберіть тип резюме:",
+        'ai_smart_summary_1_sentence': "1 речення",
+        'ai_smart_summary_3_facts': "3 факти",
+        'ai_smart_summary_deep_dive': "Глибокий огляд",
+        'ai_smart_summary_generating': "Генерую {summary_type} резюме...",
+        'ai_smart_summary_label': "<b>AI-резюме ({summary_type}):</b>\n{summary}",
         'ask_expert_prompt': "Оберіть експерта:",
         'expert_portnikov_btn': "🕵️‍♂️ Віталій Портников",
         'expert_libsits_btn': "🧠 Ігор Лібсіц",
         'ask_expert_question_prompt': "Ваше запитання до {expert_name}:",
         'expert_response_label': "Відповідь {expert_name}:",
-        'price_analysis_prompt': "💰 Аналіз цін",
+        'price_analysis_prompt': "💰 AI Аналіз Цін", # Updated text for AI Media menu
         'price_analysis_generating': "Аналізую ціну...",
         'price_analysis_result': "<b>Аналіз ціни:</b>\n{result}",
         'ai_media_menu_prompt': "AI-медіа функції:",
+        'generate_ai_news_btn': "📝 AI Генерація Новин", # Updated text for AI Media menu
         'youtube_to_news_btn': "▶️ YouTube → Новина",
         'create_filtered_channel_btn': "➕ Створити мій канал",
         'create_ai_media_btn': "🤖 Створити AI Медіа",
+        'ai_news_generating': "Генерую AI-новину...",
+        'ai_news_generated_success': "AI-новина '{title}' згенерована.",
         'youtube_url_prompt': "Посилання на YouTube-відео:",
         'youtube_processing': "Обробляю YouTube...",
         'youtube_summary_label': "<b>YouTube Новина:</b>\n{summary}",
@@ -341,9 +366,253 @@ MESSAGES = {
         'long_term_connections_result': "<b>Довгострокові зв'язки:</b>\n{result}",
         'ai_prediction_generating': "Генерую AI-прогноз...",
         'ai_prediction_result': "<b>AI-прогноз:</b>\n{result}",
-        'onboarding_step_1': "Step 1: View news '📰 My News'.",
-        'onboarding_step_2': "Step 2: Click '🧠 AI Functions' below news.",
-        'onboarding_step_3': "Step 3: Explore AI features.",
+        'onboarding_step_1': "Крок 1: Додайте джерело '➕ Додати джерело'.",
+        'onboarding_step_2': "Крок 2: Перегляньте новини '📰 Мої новини'.",
+        'onboarding_step_3': "Крок 3: Натисніть '🧠 AI-функції' під новиною.",
+        'reaction_interesting': "🔥 Цікаво",
+        'reaction_not_much': "😐 Не дуже",
+        'reaction_delete': "❌ Видалити",
+        'reaction_saved': "Реакція збережена!",
+        'reaction_deleted': "Новину видалено.",
+        'premium_granted': "Вітаємо! Преміум-доступ отримано!",
+        'digest_granted': "Вітаємо! Безкоштовний щоденний AI-дайджест отримано!",
+        'donate_message': "Дякуємо за підтримку! Картка Monobank: <code>{card_number}</code> ☕",
+        'my_sources_header': "Ваші джерела:",
+        'no_sources_added': "Джерел немає.",
+        'source_item': "{idx}. {source_name} ({source_url}) - {status} [🗑️ /source_delete_{source_id}]",
+        'source_deleted_success': "Джерело видалено.",
+        'source_delete_error': "Помилка видалення джерела.",
+        'subscribe_menu_prompt': "Керування підписками:",
+        'no_subscriptions': "Немає підписок на теми.",
+        'your_subscriptions': "Ваші підписки: {topics}",
+        'add_subscription_prompt': "Теми для підписки (через кому):",
+        'subscription_added': "Підписки '{topics}' додано!",
+        'subscription_removed': "Підписку '{topic}' видалено.",
+        'add_subscription_btn': "➕ Додати підписку",
+        'remove_subscription_btn': "➖ Видалити підписку",
+        'remove_subscription_prompt': "Тема для видалення:",
+        'subscription_not_found': "Тема '{topic}' не знайдена.",
+        'pro_tier_info': "Pro-рівень: доступ до API та розширені інтеграції. Зв'яжіться з адміном.",
+        'help_sell_btn': "🤝 Допоможи продати",
+        'help_buy_btn': "🛒 Допоможи купити",
+        'help_sell_message': "Contact our sales assistant bot: {bot_link}",
+        'help_buy_message': "Check the channel with best offers: {channel_link}",
+        'settings_btn': "⚙️ Налаштування", # New button
+        'help_btn': "❓ Допомога", # New button
+        'language_btn': "🌐 Мова", # New button
+    },
+    'en': {
+        'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
+        'main_menu_prompt': "Choose an action:",
+        'help_text': ("<b>Commands:</b>\n"
+                      "/start - Start\n"
+                      "/menu - Menu\n"
+                      "/cancel - Cancel\n"
+                      "/my_news - My News\n"
+                      "/add_source - Add Source\n"
+                      "/my_sources - My Sources\n"
+                      "/ask_expert - Expert\n"
+                      "/invite - Invite\n"
+                      "/subscribe - Subscriptions\n"
+                      "/donate - Donate ☕\n"
+                      "<b>AI:</b> below news.\n"
+                      "<b>AI Media:</b> /ai_media_menu"),
+        'action_cancelled': "Cancelled. Choose action:",
+        'add_source_prompt': "Send source URL:",
+        'invalid_url': "Invalid URL.",
+        'source_url_not_found': "Source URL not found.",
+        'source_added_success': "Source '{source_url}' added!",
+        'add_source_error': "Error adding source.",
+        'no_new_news': "No new news.",
+        'news_not_found': "News not found.",
+        'no_more_news': "No more news.",
+        'first_news': "First news.",
+        'error_start_menu': "Error. Start with /menu.",
+        'ai_functions_prompt': "AI Functions:",
+        'ai_function_premium_only': "Premium only.",
+        'news_title_label': "Title:",
+        'news_content_label': "Content:",
+        'published_at_label': "Published:",
+        'news_progress': "News {current_index} of {total_news}",
+        'read_source_btn': "🔗 Source",
+        'ai_functions_btn': "🧠 AI Functions",
+        'prev_btn': "⬅️ Previous",
+        'next_btn': "➡️ Next",
+        'main_menu_btn': "⬅️ Menu",
+        'generating_ai_summary': "Generating AI summary...",
+        'ai_summary_label': "AI Summary:",
+        'select_translate_language': "Select language:",
+        'translating_news': "Translating...",
+        'translation_label': "Translation to {language_name}:",
+        'generating_audio': "Generating audio...",
+        'audio_news_caption': "🔊 News: {title}",
+        'audio_error': "Error generating audio.",
+        'ask_news_ai_prompt': "Your question:",
+        'processing_question': "Processing...",
+        'ai_response_label': "AI Response:",
+        'ai_news_not_found': "News not found.",
+        'ask_free_ai_prompt': "Your question to AI:",
+        'extracting_entities': "Extracting entities...",
+        'entities_label': "Entities:",
+        'explain_term_prompt': "Term to explain:",
+        'explaining_term': "Explaining...",
+        'term_explanation_label': "Explanation of '{term}':",
+        'classifying_topics': "Classifying topics...",
+        'topics_label': "Topics:",
+        'checking_facts': "Checking facts...",
+        'fact_check_label': "Fact Check:",
+        'analyzing_sentiment': "Analyzing sentiment...",
+        'sentiment_label': "Sentiment:",
+        'detecting_bias': "Detecting bias...",
+        'bias_label': "Bias Detection:",
+        'generating_audience_summary': "Generating audience summary...",
+        'audience_summary_label': "Audience Summary:",
+        'searching_historical_analogues': "Searching analogues...",
+        'historical_analogues_label': "Historical Analogues:",
+        'analyzing_impact': "Analyzing impact...",
+        'impact_label': "Impact Analysis:",
+        'performing_monetary_analysis': "Performing monetary analysis...",
+        'monetary_analysis_label': "Monetary Analysis:",
+        'bookmark_added': "News added to bookmarks!",
+        'bookmark_already_exists': "Already bookmarked.",
+        'bookmark_add_error': "Error bookmarking.",
+        'bookmark_removed': "News removed from bookmarks!",
+        'bookmark_not_found': "News not in bookmarks.",
+        'bookmark_remove_error': "Error removing bookmark.",
+        'no_bookmarks': "No bookmarks yet.",
+        'your_bookmarks_label': "Your Bookmarks:",
+        'report_fake_news_btn': "🚩 Report Fake News",
+        'report_already_sent': "Report already sent.",
+        'report_sent_success': "Thank you! Report sent.",
+        'report_action_done': "Thank you! Choose action:",
+        'user_not_identified': "User not identified.",
+        'no_admin_access': "No access.",
+        'loading_moderation_news': "Loading news...",
+        'no_pending_news': "No news pending moderation.",
+        'moderation_news_label': "News for moderation ({current_index} of {total_news}):",
+        'source_label': "Source:",
+        'status_label': "Status:",
+        'approve_btn': "✅ Approve",
+        'reject_btn': "❌ Reject",
+        'news_approved': "News {news_id} approved!",
+        'news_rejected': "News {news_id} rejected!",
+        'all_moderation_done': "All news processed.",
+        'no_more_moderation_news': "No more news.",
+        'first_moderation_news': "First news.",
+        'source_stats_label': "📊 Source Stats (top-10):",
+        'source_stats_entry': "{idx}. {source_name}: {count} publications",
+        'no_source_stats': "No source stats available.",
+        'your_invite_code': "Your invite code: <code>{invite_code}</code>\nShare: {invite_link}",
+        'invite_error': "Error generating code.",
+        'daily_digest_header': "📰 Your daily AI News Digest:",
+        'daily_digest_entry': "<b>{idx}. {title}</b>\n{summary}\n🔗 <a href='{source_url}'>Read</a>\n\n",
+        'no_news_for_digest': "No news for digest.",
+        'ai_rate_limit_exceeded': "Too many AI requests. Used {count}/{limit}. Try tomorrow or premium.",
+        'what_new_digest_header': "👋 Hello! You missed {count} news. Digest:",
+        'what_new_digest_footer': "\n\nSee all news? Click '📰 My News'.",
+        'cancel_btn': "Cancel",
+        'toggle_notifications_btn': "🔔 Notifications",
+        'set_digest_frequency_btn': "🔄 Digest Frequency",
+        'toggle_safe_mode_btn': "🔒 Safe Mode",
+        'set_view_mode_btn': "👁️ View Mode",
+        'ai_summary_btn': "📝 AI Summary",
+        'translate_btn': "🌐 Translate",
+        'ask_ai_btn': "❓ Ask AI",
+        'extract_entities_btn': "🧑‍🤝‍🧑 Entities",
+        'explain_term_btn': "❓ Explain",
+        'classify_topics_btn': "🏷️ Topics",
+        'listen_news_btn': "🔊 Listen",
+        'next_ai_page_btn': "➡️ Next (AI)",
+        'fact_check_btn': "✅ Fact Check (Premium)",
+        'sentiment_trend_analysis_btn': "📊 AI Sentiment Trend", # Updated text for AI Media menu
+        'bias_detection_btn': "🔍 Bias Detection (Premium)",
+        'audience_summary_btn': "📝 Audience Summary (Premium)",
+        'historical_analogues_btn': "📜 Analogues (Premium)",
+        'impact_analysis_btn': "💥 Impact Analysis (Premium)",
+        'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
+        'prev_ai_page_btn': "⬅️ Back (AI)",
+        'bookmark_add_btn': "❤️ Bookmark",
+        'comments_btn': "💬 Comments", # New button
+        'english_lang': "🇬🇧 Англійська",
+        'polish_lang': "🇵🇱 Польська",
+        'german_lang': "🇩🇪 Німецька",
+        'spanish_lang': "🇪🇸 Іспанська",
+        'french_lang': "🇫🇷 Французька",
+        'ukrainian_lang': "🇺🇦 Українська",
+        'back_to_ai_btn': "⬅️ До AI",
+        'ask_free_ai_btn': "💬 Запитай AI",
+        'news_channel_link_error': "Invalid channel link.",
+        'news_channel_link_warning': "Invalid link format.",
+        'news_published_success': "News '{title}' published to channel {identifier}.",
+        'news_publish_error': "Error publishing '{title}': {error}",
+        'source_parsing_warning': "Failed to parse from source: {name} ({url}).",
+        'source_parsing_error': "Error parsing source {name} ({url}): {error}",
+        'no_active_sources': "No active sources.",
+        'news_already_exists': "News with URL {url} already exists.",
+        'news_added_success': "News '{title}' added.",
+        'news_not_added': "News from source {name} not added.",
+        'source_last_parsed_updated': "Updated last_parsed for source {name}.",
+        'deleted_expired_news': "Deleted {count} expired news.",
+        'no_expired_news': "No expired news.",
+        'daily_digest_no_users': "No users for digest.",
+        'daily_digest_no_news': "No news for digest for user {user_id}.",
+        'daily_digest_sent_success': "Digest sent to user {user_id}.",
+        'daily_digest_send_error': "Error sending digest to user {user_id}: {error}",
+        'invite_link_label': "Invite Link",
+        'source_stats_top_10': "📊 Source Stats (top-10):",
+        'source_stats_item': "{idx}. {source_name}: {publication_count} publications",
+        'no_source_stats_available': "No source stats.",
+        'moderation_news_header': "News for moderation ({current_index} of {total_news}):",
+        'moderation_news_approved': "News {news_id} approved!",
+        'moderation_news_rejected': "News {news_id} rejected!",
+        'moderation_all_done': "All news processed.",
+        'moderation_no_more_news': "No more news.",
+        'moderation_first_news': "First news.",
+        'ai_smart_summary_prompt': "Select summary type:",
+        'ai_smart_summary_1_sentence': "1 sentence",
+        'ai_smart_summary_3_facts': "3 facts",
+        'ai_smart_summary_deep_dive': "Deep dive",
+        'ai_smart_summary_generating': "Generating {summary_type} summary...",
+        'ai_smart_summary_label': "<b>AI Summary ({summary_type}):</b>\n{summary}",
+        'ask_expert_prompt': "Select expert:",
+        'expert_portnikov_btn': "🕵️‍♂️ Vitaliy Portnikov",
+        'expert_libsits_btn': "🧠 Igor Libsits",
+        'ask_expert_question_prompt': "Your question to {expert_name}:",
+        'expert_response_label': "Response from {expert_name}:",
+        'price_analysis_prompt': "💰 AI Price Analysis", # Updated text for AI Media menu
+        'price_analysis_generating': "Analyzing price...",
+        'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
+        'ai_media_menu_prompt': "AI Media Functions:",
+        'generate_ai_news_btn': "📝 AI News Generation", # Updated text for AI Media menu
+        'youtube_to_news_btn': "▶️ YouTube → News",
+        'create_filtered_channel_btn': "➕ Create My Channel",
+        'create_ai_media_btn': "🤖 Create AI Media",
+        'ai_news_generating': "Generating AI news...",
+        'ai_news_generated_success': "AI news '{title}' generated.",
+        'youtube_url_prompt': "YouTube video link:",
+        'youtube_processing': "Processing YouTube...",
+        'youtube_summary_label': "<b>YouTube News:</b>\n{summary}",
+        'filtered_channel_prompt': "Channel name and topics (comma-separated):",
+        'filtered_channel_creating': "Creating channel '{channel_name}' with topics: {topics}...",
+        'filtered_channel_created': "Channel '{channel_name}' 'created'! Add bot as admin to publish news based on your topics.",
+        'ai_media_creating': "Creating AI media...",
+        'ai_media_created': "Your AI media '{media_name}' 'created'!",
+        'analytics_menu_prompt': "Analytics:",
+        'infographics_btn': "📈 Infographics",
+        'trust_index_btn': "⚖️ Trust Index",
+        'long_term_connections_btn': "🔗 Connections",
+        'ai_prediction_btn': "🔮 AI Prediction",
+        'infographics_generating': "Generating infographics...",
+        'infographics_result': "<b>Infographics:</b>\n{result}",
+        'trust_index_calculating': "Calculating trust index...",
+        'trust_index_result': "<b>Trust Index:</b>\n{result}",
+        'long_term_connections_generating': "Searching connections...",
+        'long_term_connections_result': "<b>Long-term Connections:</b>\n{result}",
+        'ai_prediction_generating': "Generating AI prediction...",
+        'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
+        'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
+        'onboarding_step_2': "Step 2: View news '📰 My News'.",
+        'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
         'reaction_interesting': "🔥 Interesting",
         'reaction_not_much': "😐 Not much",
         'reaction_delete': "❌ Delete",
@@ -372,32 +641,14 @@ MESSAGES = {
         'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
         'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'help_btn': "❓ Help",
-        'language_btn': "🌐 Language",
-        'invite_friends': "👥 Invite Friends",
-        'subscribe_menu': "➕ Subscriptions",
-        'english_lang': "English",
-        'ukrainian_lang': "Ukrainian",
-        'polish_lang': "Polish",
-        'german_lang': "German",
-        'spanish_lang': "Spanish",
-        'french_lang': "French",
-        'unknown_source': "Unknown Source",
-        'bookmark_add_btn': "⭐️ Bookmark",
-        'action_done': "Action done.",
+        'settings_btn': "⚙️ Settings", # New button
+        'help_btn': "❓ Help", # New button
+        'language_btn': "🌐 Language", # New button
     }
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
-    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, "").format(**kwargs)
-
-def normalize_url(url: str) -> str:
-    parsed = urlparse(url)
-    path = parsed.path.rstrip('/')
-    query_params = parse_qs(parsed.query)
-    sorted_query = urlencode(sorted(query_params.items()), doseq=True)
-    normalized_url = urlunparse(parsed._replace(path=path, query=sorted_query, fragment=''))
-    return normalized_url
+    return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, f"MISSING_TRANSLATION_{key}").format(**kwargs)
 
 async def create_or_update_user(user_data: types.User) -> User:
     pool = await get_db_pool()
@@ -454,64 +705,56 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            normalized_source_url = normalize_url(str(news_data['source_url']))
-            
-            await cur.execute("SELECT id FROM news WHERE normalized_source_url = %s", (normalized_source_url,))
+            await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
             if await cur.fetchone():
-                logger.info(f"News with URL {news_data['source_url']} (normalized: {normalized_source_url}) already exists. Skipping.")
-                return None
+                return None # News already exists
 
-            await cur.execute("SELECT id FROM sources WHERE normalized_source_url = %s", (normalized_source_url,))
+            await cur.execute("SELECT id FROM sources WHERE source_url = %s", (str(news_data['source_url']),))
             source_record = await cur.fetchone()
             source_id = None
             if source_record:
                 source_id = source_record['id']
             else:
-                logger.warning(f"Source with normalized URL {normalized_source_url} not found. News not added.")
-                return None
+                user_id_for_source = news_data.get('user_id_for_source')
+                parsed_url = HttpUrl(news_data['source_url'])
+                source_name = parsed_url.host if parsed_url.host else 'Unknown Source'
+                await cur.execute(
+                    """INSERT INTO sources (user_id, source_name, source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
+                    (user_id_for_source, source_name, str(news_data['source_url']), news_data.get('source_type', 'web'))
+                )
+                source_id = (await cur.fetchone())['id']
 
-            moderation_status = 'approved' if news_data.get('user_id_for_source') is not None else 'pending'
+            moderation_status = 'approved' if news_data.get('user_id_for_source') is None else 'pending'
             
-            ai_classified_topics = news_data.get('ai_classified_topics')
-            if ai_classified_topics is None:
-                try:
-                    topics_raw = await call_gemini_api(f"Класифікуй цю новину за 3-5 ключовими темами українською мовою, перелічи їх через кому: {news_data['title']}. {news_data['content']}", user_telegram_id=None)
-                    if topics_raw:
-                        ai_classified_topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
-                    else:
-                        ai_classified_topics = []
-                except Exception as e:
-                    logger.error(f"Failed to classify topics for news {news_data['title']}: {e}")
-                    ai_classified_topics = []
-
             await cur.execute(
-                """INSERT INTO news (source_id, title, content, source_url, normalized_source_url, image_url, published_at, moderation_status, is_published_to_channel, ai_classified_topics) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
-                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), normalized_source_url, str(news_data.get('image_url')) if news_data.get('image_url') else None, news_data['published_at'], moderation_status, False, ai_classified_topics)
+                """INSERT INTO news (source_id, title, content, source_url, image_url, published_at, ai_summary, ai_classified_topics, moderation_status, is_published_to_channel) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
+                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), str(news_data.get('image_url')) if news_data.get('image_url') else None, news_data['published_at'], news_data.get('ai_summary'), json.dumps(news_data.get('ai_classified_topics')) if news_data.get('ai_classified_topics') else None, moderation_status, False)
             )
             return News(**await cur.fetchone())
 
-async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topics: Optional[List[str]] = None, start_datetime: Optional[datetime] = None) -> List[News]:
+async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topics: Optional[List[str]] = None) -> List[News]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             query = """
-                SELECT n.* FROM news n
-                LEFT JOIN user_news_views uv ON n.id = uv.news_id AND uv.user_id = %s
-                WHERE uv.news_id IS NULL
-                AND n.moderation_status = 'approved'
-                AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+                SELECT * FROM news
+                WHERE id NOT IN (SELECT news_id FROM user_news_views WHERE user_id = %s)
+                AND moderation_status = 'approved'
+                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
             """
             params = [user_id]
             
-            if start_datetime:
-                query += " AND n.published_at >= %s"
-                params.append(start_datetime)
-            
-            if topics and len(topics) > 0:
-                query += " AND n.ai_classified_topics && %s::text[]"
-                params.append(topics)
+            if topics:
+                topic_conditions = []
+                for topic in topics:
+                    # Use the '?' operator for checking if a JSONB array contains a specific string element
+                    topic_conditions.append("ai_classified_topics ? %s")
+                    params.append(topic) # Add topic directly as a parameter
+                
+                if topic_conditions:
+                    query += f" AND ({' OR '.join(topic_conditions)})"
 
-            query += " ORDER BY n.published_at DESC LIMIT %s OFFSET %s;"
+            query += " ORDER BY published_at DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
             
             await cur.execute(query, tuple(params))
@@ -607,6 +850,9 @@ async def remove_user_subscription(user_id: int, topic: str):
             await cur.execute("DELETE FROM user_subscriptions WHERE user_id = %s AND topic = %s;", (user_id, topic))
             await conn.commit()
 
+class AddSourceStates(StatesGroup):
+    waiting_for_url = State()
+
 class NewsBrowse(StatesGroup):
     Browse_news = State()
     news_index = State()
@@ -619,6 +865,7 @@ class AIAssistant(StatesGroup):
     waiting_for_term_to_explain = State()
     waiting_for_translate_language = State()
     waiting_for_free_question = State()
+    waiting_for_summary_type = State()
     waiting_for_youtube_url = State()
     waiting_for_expert_question = State()
     expert_type = State()
@@ -635,9 +882,10 @@ class SubscriptionStates(StatesGroup):
 
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'settings_btn'), callback_data="settings_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'my_sources'), callback_data="my_sources"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"), InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'invite_friends'), callback_data="invite_friends"), InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'donate'), callback_data="donate"))
@@ -654,11 +902,14 @@ def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardM
 
 def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'extract_entities_btn'), callback_data=f"extract_entities_{news_id}"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'explain_term_btn'), callback_data=f"explain_term_{news_id}"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'fact_check_btn'), callback_data=f"fact_check_news_{news_id}"))
+    if page == 0:
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data=f"ai_summary_select_type_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_ai_btn'), callback_data=f"ask_news_ai_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"))
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'next_ai_page_btn'), callback_data=f"ai_functions_page_1_{news_id}"))
+    elif page == 1:
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'extract_entities_btn'), callback_data=f"extract_entities_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'explain_term_btn'), callback_data=f"explain_term_{news_id}"))
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'classify_topics_btn'), callback_data=f"classify_topics_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'fact_check_btn'), callback_data=f"fact_check_news_{news_id}"))
+        builder.row(InlineKeyboardButton(text=get_message(user_lang, 'prev_ai_page_btn'), callback_data=f"ai_functions_page_0_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'bookmark_add_btn'), callback_data=f"bookmark_news_add_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'report_fake_news_btn'), callback_data=f"report_fake_news_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
     return builder.as_markup()
@@ -671,6 +922,14 @@ def get_translate_language_keyboard(news_id: int, user_lang: str) -> InlineKeybo
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data=f"ai_news_functions_menu_{news_id}"))
     return builder.as_markup()
 
+def get_smart_summary_type_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_smart_summary_1_sentence'), callback_data=f"smart_summary_1_sentence_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_smart_summary_3_facts'), callback_data=f"smart_summary_3_facts_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_smart_summary_deep_dive'), callback_data=f"smart_summary_deep_dive_{news_id}"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data=f"ai_news_functions_menu_{news_id}"))
+    return builder.as_markup()
+
 def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'expert_portnikov_btn'), callback_data="ask_expert_portnikov"))
@@ -680,10 +939,12 @@ def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
 
 def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"), InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_ai_media_btn'), callback_data="create_ai_media"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data="ai_summary_select_type_0"), InlineKeyboardButton(text=get_message(user_lang, 'classify_topics_btn'), callback_data="classify_topics_0")) # Dummy news_id for these
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'sentiment_trend_analysis_btn'), callback_data="sentiment_trend_analysis_0"), InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'comments_btn'), callback_data="comments_menu")) # Assuming comments_menu exists
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data="main_menu")) # Back to main menu
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
@@ -769,12 +1030,38 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(get_message(user_lang, 'main_menu_prompt'), reply_markup=get_main_menu_keyboard(user_lang))
     await callback.answer()
 
-@router.callback_query(F.data == "help_menu")
-async def callback_help_menu(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "add_source")
+async def callback_add_source(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
-    await callback.message.edit_text(get_message(user_lang, 'help_text'), parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard(user_lang))
+    await callback.message.edit_text(get_message(user_lang, 'add_source_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
+    await state.set_state(AddSourceStates.waiting_for_url)
     await callback.answer()
+
+@router.message(AddSourceStates.waiting_for_url)
+async def process_source_url(message: Message, state: FSMContext):
+    user = await get_user_by_telegram_id(message.from_user.id)
+    user_lang = user.language if user else 'uk'
+    source_url = message.text
+    if not (source_url.startswith("http://") or source_url.startswith("https://")):
+        await message.answer(get_message(user_lang, 'invalid_url'))
+        return
+    try:
+        pool = await get_db_pool()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                parsed_url = HttpUrl(source_url)
+                source_name = parsed_url.host if parsed_url.host else 'Невідоме джерело'
+                await cur.execute(
+                    """INSERT INTO sources (user_id, source_name, source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
+                    (user.id, source_name, source_url, 'web')
+                )
+                await conn.commit()
+        await message.answer(get_message(user_lang, 'source_added_success', source_url=source_url), reply_markup=get_main_menu_keyboard(user_lang))
+    except Exception as e:
+        logger.error(f"Error adding source '{source_url}': {e}", exc_info=True)
+        await message.answer(get_message(user_lang, 'add_source_error'), reply_markup=get_main_menu_keyboard(user_lang))
+    await state.clear()
 
 @router.callback_query(F.data == "my_sources")
 async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
@@ -824,8 +1111,7 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
     user_lang = user.language if user else 'uk'
     user_subscriptions = await get_user_subscriptions(user.id)
 
-    start_of_today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    all_news_ids = [n.id for n in await get_news_for_user(user.id, limit=100, offset=0, topics=user_subscriptions if user_subscriptions else None, start_datetime=start_of_today)]
+    all_news_ids = [n.id for n in await get_news_for_user(user.id, limit=100, offset=0, topics=user_subscriptions if user_subscriptions else None)]
 
     if not all_news_ids:
         await callback.message.edit_text(get_message(user_lang, 'no_new_news'), reply_markup=get_main_menu_keyboard(user_lang))
@@ -914,6 +1200,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'read_source_btn'), url=str(news_item.source_url)))
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_functions_btn'), callback_data=f"ai_news_functions_menu_{news_item.id}"))
+    # Fix: Use builder.row() instead of builder.row_width()
     keyboard_builder.row(*get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
     
     nav_buttons = []
@@ -934,16 +1221,62 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
         except Exception as e:
             logger.warning(f"Failed to send photo for news {news_id} from URL {news_item.image_url}: {e}. Sending with placeholder.")
             placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
-            msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text + f"\n(Original image URL: {news_item.image_url})", reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text + f"\n(Original image URL: {news_item.image_url})", reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     else:
         placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
-        msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     
     if msg:
         await state.update_data(last_message_id=msg.message_id)
     
     if user:
         await mark_news_as_viewed(user.id, news_item.id)
+
+@router.callback_query(F.data.startswith("react_news_"))
+async def handle_news_reaction(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split('_')
+    reaction_type = parts[2]
+    news_id = int(parts[3])
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+
+    if not user:
+        await callback.answer(get_message(user_lang, 'user_not_identified'), show_alert=True)
+        return
+
+    await add_user_news_reaction(user.id, news_id, reaction_type)
+
+    if reaction_type == 'delete':
+        await mark_news_as_viewed(user.id, news_id)
+        await callback.answer(get_message(user_lang, 'reaction_deleted'), show_alert=True)
+        
+        user_data = await state.get_data()
+        news_ids = user_data.get("news_ids", [])
+        current_index = user_data.get("current_news_index", 0)
+        
+        if news_id in news_ids:
+            news_ids.remove(news_id)
+            await state.update_data(news_ids=news_ids)
+            if current_index >= len(news_ids) and len(news_ids) > 0:
+                current_index = len(news_ids) - 1
+                await state.update_data(current_news_index=current_index)
+
+        if news_ids:
+            await send_news_to_user(callback.message.chat.id, news_ids[current_index], current_index, len(news_ids), state)
+        else:
+            await callback.message.edit_text(get_message(user_lang, 'no_more_news'), reply_markup=get_main_menu_keyboard(user_lang))
+    else:
+        await callback.answer(get_message(user_lang, 'reaction_saved'), show_alert=True)
+    
+    current_state_data = await state.get_data()
+    last_message_id = current_state_data.get('last_message_id')
+    if last_message_id:
+        try:
+            await bot.edit_message_reply_markup(chat_id=callback.message.chat.id, message_id=last_message_id, reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
+        except Exception as e:
+            logger.warning(f"Failed to edit message reply markup {last_message_id} after reaction: {e}")
+    await callback.answer()
+
 
 async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, chat_history: Optional[List[Dict]] = None, image_data: Optional[str] = None) -> Optional[str]:
     if not GEMINI_API_KEY:
@@ -1010,6 +1343,49 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'ai_functions_prompt'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang, page))
     await callback.answer()
 
+@router.callback_query(F.data.startswith("ai_summary_select_type_"))
+async def handle_ai_summary_select_type(callback: CallbackQuery, state: FSMContext):
+    news_id = int(callback.data.split('_')[4])
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    await state.update_data(news_id_for_summary=news_id)
+    await callback.message.edit_text(get_message(user_lang, 'ai_smart_summary_prompt'), reply_markup=get_smart_summary_type_keyboard(news_id, user_lang))
+    await state.set_state(AIAssistant.waiting_for_summary_type)
+    await callback.answer()
+
+@router.callback_query(AIAssistant.waiting_for_summary_type, F.data.startswith("smart_summary_"))
+async def handle_smart_summary(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split('_')
+    summary_type_key = parts[2]
+    news_id = int(parts[3])
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    news_item = await get_news_by_id(news_id)
+    
+    if not news_item:
+        await callback.answer(get_message(user_lang, 'news_not_found'), show_alert=True)
+        await state.clear()
+        return
+    
+    summary_type_text = ""
+    prompt = ""
+    if summary_type_key == '1_sentence':
+        summary_type_text = get_message(user_lang, 'ai_smart_summary_1_sentence')
+        prompt = f"Зроби резюме новини в одне речення українською: {news_item.content}"
+    elif summary_type_key == '3_facts':
+        summary_type_text = get_message(user_lang, 'ai_smart_summary_3_facts')
+        prompt = f"Виділи 3 ключових факти з новини українською: {news_item.content}"
+    elif summary_type_key == 'deep_dive':
+        summary_type_text = get_message(user_lang, 'ai_smart_summary_deep_dive')
+        prompt = f"Зроби глибокий огляд новини українською, включаючи контекст, наслідки та аналіз: {news_item.content}"
+    
+    await callback.message.edit_text(get_message(user_lang, 'ai_smart_summary_generating', summary_type=summary_type_text))
+    summary = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
+    
+    await callback.message.edit_text(get_message(user_lang, 'ai_smart_summary_label', summary_type=summary_type_text, summary=summary), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
+    await state.clear()
+    await callback.answer()
+
 @router.callback_query(F.data.startswith("translate_select_lang_"))
 async def handle_translate_select_language(callback: CallbackQuery, state: FSMContext):
     news_id = int(callback.data.split('_')[3])
@@ -1027,7 +1403,7 @@ async def handle_translate_to_language(callback: CallbackQuery, state: FSMContex
     news_id = int(parts[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
-    language_names = {"en": get_message(user_lang, 'english_lang'), "pl": get_message(user_lang, 'polish_lang'), "de": get_message(user_lang, 'german_lang'), "es": get_message(user_lang, 'spanish_lang'), "fr": get_message(user_lang, 'french_lang'), "uk": get_message(user_lang, 'ukrainian_lang')}
+    language_names = {"en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French", "uk": "Ukrainian"}
     language_name = language_names.get(lang_code, "selected language")
     news_item = await get_news_by_id(news_id)
     
@@ -1068,6 +1444,78 @@ async def handle_listen_news(callback: CallbackQuery):
         logger.error(f"Error generating or sending audio for news {news_id}: {e}", exc_info=True)
         await callback.message.edit_text(get_message(user_lang, 'audio_error'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await callback.answer()
+
+@router.callback_query(F.data.startswith("ask_news_ai_"))
+async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
+    news_id = int(callback.data.split('_')[3])
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    await state.update_data(waiting_for_news_id_for_ai=news_id)
+    await callback.message.edit_text(get_message(user_lang, 'ask_news_ai_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
+    await state.set_state(AIAssistant.waiting_for_question)
+    await callback.answer()
+
+@router.message(AIAssistant.waiting_for_question)
+async def process_ai_question(message: Message, state: FSMContext):
+    user_question = message.text
+    user_data = await state.get_data()
+    news_id = user_data.get("waiting_for_news_id_for_ai")
+    user = await get_user_by_telegram_id(message.from_user.id)
+    user_lang = user.language if user else 'uk'
+    
+    if not news_id:
+        await message.answer(get_message(user_lang, 'ai_news_not_found'), reply_markup=get_main_menu_keyboard(user_lang))
+        await state.clear()
+        return
+    
+    news_item = await get_news_by_id(news_id)
+    if not news_item:
+        await message.answer(get_message(user_lang, 'news_not_found'), reply_markup=get_main_menu_keyboard(user_lang))
+        await state.clear()
+        return
+    
+    await message.answer(get_message(user_lang, 'processing_question'))
+    
+    chat_history = user_data.get('ai_chat_history', [])
+    chat_history.append({"role": "user", "text": user_question})
+    
+    prompt = f"Новина: {news_item.content}\n\nЗапитання: {user_question}\n\nВідповідь:"
+    ai_response = await call_gemini_api(prompt, user_telegram_id=message.from_user.id, chat_history=chat_history)
+    
+    chat_history.append({"role": "model", "text": ai_response})
+    await state.update_data(ai_chat_history=chat_history)
+    
+    await message.answer(get_message(user_lang, 'ai_response_label') + f"\n{ai_response}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
+    await state.clear()
+
+@router.callback_query(F.data == "ask_free_ai")
+async def handle_ask_free_ai(callback: CallbackQuery, state: FSMContext):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
+    await state.set_state(AIAssistant.waiting_for_free_question)
+    await state.update_data(ai_chat_history=[])
+    await callback.answer()
+
+@router.message(AIAssistant.waiting_for_free_question)
+async def process_free_ai_question(message: Message, state: FSMContext):
+    user_question = message.text
+    user = await get_user_by_telegram_id(message.from_user.id)
+    user_lang = user.language if user else 'uk'
+    
+    await message.answer(get_message(user_lang, 'processing_question'))
+    
+    user_data = await state.get_data()
+    chat_history = user_data.get('ai_chat_history', [])
+    chat_history.append({"role": "user", "text": user_question})
+    
+    ai_response = await call_gemini_api(f"Відповідай як новинний аналітик на запитання: {user_question}", user_telegram_id=message.from_user.id, chat_history=chat_history)
+    
+    chat_history.append({"role": "model", "text": ai_response})
+    await state.update_data(ai_chat_history=chat_history)
+    
+    await message.answer(get_message(user_lang, 'ai_response_label') + f"\n{ai_response}", reply_markup=get_main_menu_keyboard(user_lang))
+    await state.clear()
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
@@ -1132,6 +1580,37 @@ async def process_term_explanation(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'term_explanation_label', term=term) + f"\n{explanation}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
     await state.clear()
+
+@router.callback_query(F.data.startswith("classify_topics_"))
+async def handle_classify_topics(callback: CallbackQuery):
+    news_id = int(callback.data.split('_')[2])
+    news_item = await get_news_by_id(news_id)
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    
+    if news_id == 0: # Handle dummy news_id from AI Media menu
+        if not await check_premium_access(callback.from_user.id):
+            await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
+            return
+        await callback.message.edit_text(get_message(user_lang, 'classifying_topics'))
+        # For general topic classification, we might need to ask for text or use a general trend analysis
+        # For now, let's just return a placeholder or prompt for text
+        await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt') + "\n(Надішліть текст для класифікації тем)", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
+        await callback.answer()
+        return
+
+    if not news_item:
+        await callback.answer(get_message(user_lang, 'news_not_found'), show_alert=True)
+        return
+    if not await check_premium_access(callback.from_user.id):
+        await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
+        return
+    
+    await callback.message.edit_text(get_message(user_lang, 'classifying_topics'))
+    topics = await call_gemini_api(f"Класифікуй новину за 3-5 основними темами українською, перелічи через кому: {news_item.content}", user_telegram_id=callback.from_user.id)
+    
+    await callback.message.edit_text(get_message(user_lang, 'topics_label') + f"\n{topics}", reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
 async def handle_fact_check_news(callback: CallbackQuery):
@@ -1256,9 +1735,9 @@ async def send_news_to_channel(news_item: News):
                 await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
             except Exception as photo_e:
                 logger.error(f"Failed to send photo for news {news_item.id} to channel {channel_identifier} from URL {news_item.image_url}: {photo_e}. Sending message without photo.", exc_info=True)
-                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         else:
-            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         
         logger.info(get_message('uk', 'news_published_success', title=news_item.title, identifier=channel_identifier))
         await mark_news_as_published_to_channel(news_item.id)
@@ -1275,7 +1754,6 @@ async def fetch_and_post_news_task():
             sources = await cur.fetchall()
     
     for source in sources:
-        logger.info(f"Processing source: {source['source_name']} ({source['source_url']})")
         if not all([source.get('source_type'), source.get('source_url'), source.get('source_name')]):
             logger.warning(f"Skipping source due to missing data: {source}")
             continue
@@ -1285,26 +1763,16 @@ async def fetch_and_post_news_task():
             if source['source_type'] == 'rss':
                 news_data = await rss_parser.parse_rss_feed(source['source_url'])
             elif source['source_type'] == 'web':
-                logger.info(f"Attempting to parse website: {source['source_url']}")
+                logger.info(f"Парсинг веб-сайту: {source['source_url']}")
                 news_data = await web_parser.parse_website(source['source_url'])
                 if news_data:
-                    logger.info(f"Web parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
+                    logger.info(f"Парсер веб-сайту {source['source_url']} знайшов новину: {news_data.get('title', 'Без заголовка')}")
                 else:
-                    logger.info(f"Web parser for {source['source_url']} found no new news.")
+                    logger.info(f"Парсер веб-сайту {source['source_url']} не знайшов нових новин.")
             elif source['source_type'] == 'telegram':
-                logger.info(f"Attempting to parse Telegram: {source['source_url']}")
                 news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
-                if news_data:
-                    logger.info(f"Telegram parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
-                else:
-                    logger.info(f"Telegram parser for {source['source_url']} found no new news.")
             elif source['source_type'] == 'social_media':
-                logger.info(f"Attempting to parse Social Media: {source['source_url']}")
                 news_data = await social_media_parser.get_social_media_posts(source['source_url'], "general")
-                if news_data:
-                    logger.info(f"Social Media parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
-                else:
-                    logger.info(f"Social Media parser for {source['source_url']} found no new news.")
             
             if news_data:
                 news_data.update({'source_id': source['id'], 'source_name': source['source_name'], 'source_type': source['source_type'], 'user_id_for_source': None})
@@ -1384,7 +1852,7 @@ async def generate_invite_code() -> str:
 async def create_invite(inviter_user_db_id: int) -> Optional[str]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+        async with conn.cursor() as cur:
             invite_code = await generate_invite_code()
             try:
                 await cur.execute("""INSERT INTO invitations (inviter_user_id, invite_code, created_at, status) VALUES (%s, %s, CURRENT_TIMESTAMP, 'pending') RETURNING invite_code;""", (inviter_user_db_id, invite_code))
@@ -1397,6 +1865,7 @@ async def create_invite(inviter_user_db_id: int) -> Optional[str]:
 async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: str, chat_id: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
+        # Explicitly set row_factory for this cursor to ensure dictionary return
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("""SELECT id, inviter_user_id FROM invitations WHERE invite_code = %s AND status = 'pending' AND used_at IS NULL;""", (invite_code,))
             invite_record = await cur.fetchone()
@@ -1434,6 +1903,7 @@ async def command_invite_handler(callback: CallbackQuery):
     
     invite_code = await create_invite(user.id)
     if invite_code:
+        # Fix: Await bot.get_me() to get the bot's username
         bot_info = await bot.get_me()
         invite_link = f"https://t.me/{bot_info.username}?start={invite_code}"
         await callback.message.edit_text(get_message(user_lang, 'your_invite_code', invite_code=invite_code, invite_link=hlink(get_message(user_lang, 'invite_link_label'), invite_link)), parse_mode=ParseMode.HTML, disable_web_page_preview=False, reply_markup=get_main_menu_keyboard(user_lang))
@@ -1521,7 +1991,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
     search_query = f"ціна {user_input} купити Україна"
-    if image_data_base64:
+    if image_data_base664:
         search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"])
@@ -1568,6 +2038,54 @@ async def handle_ai_media_menu(callback: CallbackQuery):
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_media_menu_prompt'), reply_markup=get_ai_media_menu_keyboard(user_lang))
+    await callback.answer()
+
+@router.callback_query(F.data == "generate_ai_news")
+async def handle_generate_ai_news(callback: CallbackQuery):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    user_lang = user.language if user else 'uk'
+    
+    await callback.message.edit_text(get_message(user_lang, 'ai_news_generating'))
+    
+    search_queries = [
+        "latest global news trends",
+        "актуальні світові новини",
+        "AI news today",
+        "економічні тренди сьогодні",
+        "climate change news latest"
+    ]
+    search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
+    
+    context_news = []
+    for res_set in search_results:
+        if res_set.results:
+            for res in res_set.results:
+                if res.snippet:
+                    context_news.append(res.snippet)
+    
+    context_text = "\n\n".join(context_news[:5])
+    
+    prompt = f"На основі наступних актуальних новин та трендів, згенеруй коротку, цікаву новину українською мовою. Новина має бути готова до публікації і не містити прямого посилання на джерела, а бути оригінальним текстом, що відображає тренди:\n\n{context_text}\n\nAI-новина:"
+    ai_generated_content = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
+    
+    title = ai_generated_content.split('.')[0] if ai_generated_content and '.' in ai_generated_content else "AI-генерована новина"
+    if len(title) > 255:
+        title = title[:252] + "..."
+
+    ai_news_data = {
+        "title": title,
+        "content": ai_generated_content,
+        "source_url": "https://ai.news.bot/generated/" + str(int(time.time())),
+        "image_url": "https://placehold.co/600x400/87CEEB/FFFFFF?text=AI+News",
+        "published_at": datetime.now(timezone.utc),
+        "source_type": "ai_generated",
+        "user_id_for_source": None
+    }
+    added_news = await add_news_to_db(ai_news_data)
+    if added_news:
+        await callback.message.edit_text(get_message(user_lang, 'ai_news_generated_success', title=added_news.title), reply_markup=get_ai_media_menu_keyboard(user_lang))
+    else:
+        await callback.message.edit_text(get_message(user_lang, 'add_source_error'), reply_markup=get_ai_media_menu_keyboard(user_lang))
     await callback.answer()
 
 @router.callback_query(F.data == "youtube_to_news")
@@ -1884,6 +2402,7 @@ async def scheduler():
     fetch_schedule_expression = '*/5 * * * *'
     delete_schedule_expression = '0 */5 * * *'
     daily_digest_schedule_expression = '0 9 * * *'
+    ai_news_generation_schedule = '0 */6 * * *'
 
     while True:
         now = datetime.now(timezone.utc)
@@ -1899,12 +2418,17 @@ async def scheduler():
         daily_digest_itr = croniter(daily_digest_schedule_expression, now)
         next_daily_digest_run = daily_digest_itr.get_next(datetime)
         daily_digest_delay_seconds = (next_daily_digest_run - now).total_seconds()
-        
-        min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds)
+
+        ai_news_itr = croniter(ai_news_generation_schedule, now)
+        next_ai_news_run = ai_news_itr.get_next(datetime)
+        ai_news_delay_seconds = (next_ai_news_run - now).total_seconds()
+
+        min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds, ai_news_delay_seconds)
         
         logger.info(f"Next fetch_and_post_news_task in {int(fetch_delay_seconds)}s.")
         logger.info(f"Next delete_expired_news_task in {int(delete_delay_seconds)}s.")
         logger.info(f"Next send_daily_digest in {int(daily_digest_delay_seconds)}s.")
+        logger.info(f"Next generate_ai_news_task in {int(ai_news_delay_seconds)}s.")
         logger.info(f"Bot sleeping for {int(min_delay)}s.")
 
         await asyncio.sleep(max(1, int(min_delay)))
@@ -1916,6 +2440,53 @@ async def scheduler():
             asyncio.create_task(delete_expired_news_task())
         if (current_utc_time - next_daily_digest_run).total_seconds() >= -1:
             asyncio.create_task(send_daily_digest())
+        if (current_utc_time - next_ai_news_run).total_seconds() >= -1:
+            asyncio.create_task(generate_ai_news_task())
+
+async def generate_ai_news_task():
+    logger.info("Running generate_ai_news_task (scheduled).")
+    search_queries = [
+        "latest global news trends",
+        "актуальні світові новини",
+        "AI news today",
+        "економічні тренди сьогодні",
+        "climate change news latest"
+    ]
+    search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
+    
+    context_news = []
+    for res_set in search_results:
+        if res_set.results:
+            for res in res_set.results:
+                if res.snippet:
+                    context_news.append(res.snippet)
+    
+    context_text = "\n\n".join(context_news[:5])
+    
+    prompt = f"На основі наступних актуальних новин та трендів, згенеруй коротку, цікаву новину українською мовою. Новина має бути готова до публікації і не містити прямого посилання на джерела, а бути оригінальним текстом, що відображає тренди:\n\n{context_text}\n\nAI-новина:"
+    ai_generated_content = await call_gemini_api(prompt)
+
+    if ai_generated_content:
+        title = ai_generated_content.split('.')[0] if ai_generated_content and '.' in ai_generated_content else "AI-generated News"
+        if len(title) > 255:
+            title = title[:252] + "..."
+
+        ai_news_data = {
+            "title": title,
+            "content": ai_generated_content,
+            "source_url": "https://ai.news.bot/generated/" + str(int(time.time())),
+            "image_url": "https://placehold.co/600x400/87CEEB/FFFFFF?text=AI+News",
+            "published_at": datetime.now(timezone.utc),
+            "source_type": "ai_generated",
+            "user_id_for_source": None
+        }
+        added_news = await add_news_to_db(ai_news_data)
+        if added_news:
+            logger.info(f"AI-generated news '{added_news.title}' added to DB.")
+        else:
+            logger.warning("AI-generated news was not added to DB (possibly already exists).")
+    else:
+        logger.warning("Failed to generate AI news content.")
 
 @app.on_event("startup")
 async def on_startup():
@@ -1940,7 +2511,7 @@ async def on_startup():
 async def on_shutdown():
     if db_pool:
         await db_pool.close()
-    logger.info("DB pool closed.")
+        logger.info("DB pool closed.")
     await bot.session.close()
     logger.info("FastAPI app shut down.")
 
@@ -2021,7 +2592,7 @@ async def get_admin_stats(api_key: str = Depends(get_api_key)):
             return {"total_users": total_users, "total_news": total_news, "active_users_count": active_users_count}
 
 @app.get("/api/admin/news")
-async def get_admin_news(api_key: str = Depends(api_key_header), limit: int = 10, offset: int = 0, status: Optional[str] = None):
+async def get_admin_news(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0, status: Optional[str] = None):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2036,7 +2607,7 @@ async def get_admin_news(api_key: str = Depends(api_key_header), limit: int = 10
             return await cur.fetchall()
 
 @app.get("/api/admin/news/counts_by_status")
-async def get_news_counts_by_status(api_key: str = Depends(api_key_header)):
+async def get_news_counts_by_status(api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2044,19 +2615,19 @@ async def get_news_counts_by_status(api_key: str = Depends(api_key_header)):
             return {row['moderation_status']: row['count'] for row in await cur.fetchall()}
 
 @app.put("/api/admin/news/{news_id}")
-async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api_key_header)):
+async def update_admin_news(news_id: int, news: News, api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            params = [news.source_id, news.title, news.content, str(news.source_url), normalize_url(str(news.source_url)), str(news.image_url) if news.image_url else None, news.published_at, news.moderation_status, news.expires_at, news.is_published_to_channel, news.ai_classified_topics, news_id]
-            await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, normalized_source_url = %s, image_url = %s, published_at = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s, ai_classified_topics = %s WHERE id = %s RETURNING *;""", tuple(params))
+            params = [news.source_id, news.title, news.content, str(news.source_url), str(news.image_url) if news.image_url else None, news.published_at, news.ai_summary, json.dumps(news.ai_classified_topics) if news.ai_classified_topics else None, news.moderation_status, news.expires_at, news.is_published_to_channel, news_id]
+            await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, image_url = %s, published_at = %s, ai_summary = %s, ai_classified_topics = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s WHERE id = %s RETURNING *;""", tuple(params))
             updated_rec = await cur.fetchone()
             if not updated_rec:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
             return News(**updated_rec).__dict__
 
 @app.delete("/api/admin/news/{news_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_admin_news_api(news_id: int, api_key: str = Depends(api_key_header)):
+async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key)):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
