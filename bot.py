@@ -38,96 +38,8 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 
-from src.parsers import rss_parser, web_parser
 from database import get_db_pool
-from datetime import datetime, timezone
 from aiogram.utils.markdown import hlink
-
-setup_scheduler(bot)
-
-
-
-async def fetch_and_post_news_task(bot):
-    pool = await get_db_pool()
-
-    async with pool.acquire() as conn:
-        sources = await conn.fetch("SELECT * FROM sources WHERE is_active = TRUE")
-
-        for source in sources:
-            source_id = source['id']
-            source_url = source['url']
-            source_type = source['source_type']
-
-            try:
-                if source_type == 'rss':
-                    news_list = await rss_parser.parse_rss_feed(source_url)
-                elif source_type == 'web':
-                    parsed_article = await web_parser.parse_website(source_url)
-                    news_list = [parsed_article] if parsed_article else []
-                else:
-                    print(f"[!] Невідомий тип джерела: {source_type}")
-                    continue
-
-                for news in news_list:
-                    if not news:
-                        continue
-
-                    source_link = news.get('source_url')
-                    # Перевірка на дублі
-                    existing = await conn.fetchval(
-                        "SELECT 1 FROM news WHERE source_url = $1",
-                        source_link
-                    )
-                    if existing:
-                        continue  # дубль
-
-                    await conn.execute(
-                        """
-                        INSERT INTO news (title, content, image_url, source_url, published_at, source_id, lang)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        """,
-                        news['title'],
-                        news['content'],
-                        news['image_url'],
-                        news['source_url'],
-                        news['published_at'],
-                        source_id,
-                        news.get('lang', 'uk')
-                    )
-
-                    # Автоматично надіслати користувачам (опціонально)
-                    # отримати список користувачів
-                    users = await conn.fetch("SELECT user_id FROM users WHERE is_premium = TRUE")
-
-                    for user in users:
-                        try:
-                            caption = f"📰 <b>{news['title']}</b>\n\n"
-                            caption += f"{news['content'][:500]}...\n\n"
-                            caption += f"{hlink('🔗 Читати повністю', news['source_url'])}"
-
-                            if news.get('image_url'):
-                                await bot.send_photo(user['user_id'], photo=news['image_url'], caption=caption, parse_mode="HTML")
-                            else:
-                                await bot.send_message(user['user_id'], caption, parse_mode="HTML")
-
-                        except Exception as e:
-                            print(f"[!] Не вдалося надіслати новину користувачу {user['user_id']}: {e}")
-
-            except Exception as e:
-                print(f"[!] Помилка при обробці джерела {source_url}: {e}")
-
-
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from tasks.fetch_news import fetch_and_post_news_task
-
-scheduler = AsyncIOScheduler()
-
-def setup_scheduler(bot):
-    scheduler.add_job(fetch_and_post_news_task, 'interval', hours=24, args=[bot])
-    scheduler.start()
-
-
-
 
 load_dotenv()
 
@@ -208,7 +120,7 @@ class News(BaseModel):
     moderation_status: str = 'pending'
     expires_at: Optional[datetime] = None
     is_published_to_channel: Optional[bool] = False
-    ai_classified_topics: Optional[List[str]] = None # Added this back for filtering
+    ai_classified_topics: Optional[List[str]] = None
 
 class User(BaseModel):
     id: Optional[int] = None
@@ -256,7 +168,6 @@ MESSAGES = {
                       "/menu - Меню\n"
                       "/cancel - Скасувати\n"
                       "/my_news - Мої новини\n"
-                      "/add_source - Додати джерело\n"
                       "/my_sources - Мої джерела\n"
                       "/ask_expert - Експерт\n"
                       "/invite - Запросити\n"
@@ -264,7 +175,6 @@ MESSAGES = {
                       "/donate - Донат ☕\n"
                       "<b>AI Media:</b> /ai_media_menu"),
         'action_cancelled': "Скасовано. Оберіть дію:",
-        'add_source_prompt': "Надішліть URL джерела:",
         'invalid_url': "Невірний URL.",
         'source_url_not_found': "URL джерела не знайдено.",
         'source_added_success': "Джерело '{source_url}' додано!",
@@ -431,9 +341,9 @@ MESSAGES = {
         'long_term_connections_result': "<b>Довгострокові зв'язки:</b>\n{result}",
         'ai_prediction_generating': "Генерую AI-прогноз...",
         'ai_prediction_result': "<b>AI-прогноз:</b>\n{result}",
-        'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
-        'onboarding_step_2': "Step 2: View news '📰 My News'.",
-        'onboarding_step_3': "Step 3: Click '🧠 AI Functions' below news.",
+        'onboarding_step_1': "Step 1: View news '📰 My News'.",
+        'onboarding_step_2': "Step 2: Click '🧠 AI Functions' below news.",
+        'onboarding_step_3': "Step 3: Explore AI features.",
         'reaction_interesting': "🔥 Interesting",
         'reaction_not_much': "😐 Not much",
         'reaction_delete': "❌ Delete",
@@ -479,18 +389,13 @@ MESSAGES = {
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
-    # Fallback to 'uk' if user_lang is not found, then to an empty string if key is missing
     return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, "").format(**kwargs)
 
 def normalize_url(url: str) -> str:
-    """Normalizes a URL to ensure consistent comparison."""
     parsed = urlparse(url)
-    # Remove trailing slashes from path
     path = parsed.path.rstrip('/')
-    # Sort query parameters
     query_params = parse_qs(parsed.query)
     sorted_query = urlencode(sorted(query_params.items()), doseq=True)
-    # Reconstruct URL without fragment and with normalized path/query
     normalized_url = urlunparse(parsed._replace(path=path, query=sorted_query, fragment=''))
     return normalized_url
 
@@ -551,47 +456,33 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
         async with conn.cursor(row_factory=dict_row) as cur:
             normalized_source_url = normalize_url(str(news_data['source_url']))
             
-            # Check if news with the same normalized source_url already exists
             await cur.execute("SELECT id FROM news WHERE normalized_source_url = %s", (normalized_source_url,))
             if await cur.fetchone():
                 logger.info(f"News with URL {news_data['source_url']} (normalized: {normalized_source_url}) already exists. Skipping.")
-                return None # News already exists
+                return None
 
-            # Find or create source
-            # Use normalized_source_url for source lookup as well
             await cur.execute("SELECT id FROM sources WHERE normalized_source_url = %s", (normalized_source_url,))
             source_record = await cur.fetchone()
             source_id = None
             if source_record:
                 source_id = source_record['id']
             else:
-                user_id_for_source = news_data.get('user_id_for_source')
-                parsed_url = HttpUrl(news_data['source_url'])
-                source_name = parsed_url.host if parsed_url.host else 'Unknown Source'
-                await cur.execute(
-                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
-                    (user_id_for_source, source_name, str(news_data['source_url']), normalized_source_url, news_data.get('source_type', 'web'))
-                )
-                source_id = (await cur.fetchone())['id']
+                logger.warning(f"Source with normalized URL {normalized_source_url} not found. News not added.")
+                return None
 
-            # Changed logic: News from user-added sources are approved, others pending
-            # If user_id_for_source is provided (meaning it's added by a user), it's approved.
-            # Otherwise (from automatic parsing/YouTube generation), it's pending.
             moderation_status = 'approved' if news_data.get('user_id_for_source') is not None else 'pending'
             
-            # Extract and classify topics using AI if not provided and it's a new news item
             ai_classified_topics = news_data.get('ai_classified_topics')
             if ai_classified_topics is None:
                 try:
-                    # Use Gemini to classify topics
-                    topics_raw = await call_gemini_api(f"Класифікуй цю новину за 3-5 ключовими темами українською мовою, перелічи їх через кому: {news_data['title']}. {news_data['content']}", user_telegram_id=None) # No user_telegram_id for background task
+                    topics_raw = await call_gemini_api(f"Класифікуй цю новину за 3-5 ключовими темами українською мовою, перелічи їх через кому: {news_data['title']}. {news_data['content']}", user_telegram_id=None)
                     if topics_raw:
                         ai_classified_topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
                     else:
                         ai_classified_topics = []
                 except Exception as e:
                     logger.error(f"Failed to classify topics for news {news_data['title']}: {e}")
-                    ai_classified_topics = [] # Default to empty list on failure
+                    ai_classified_topics = []
 
             await cur.execute(
                 """INSERT INTO news (source_id, title, content, source_url, normalized_source_url, image_url, published_at, moderation_status, is_published_to_channel, ai_classified_topics) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
@@ -606,7 +497,7 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
             query = """
                 SELECT n.* FROM news n
                 LEFT JOIN user_news_views uv ON n.id = uv.news_id AND uv.user_id = %s
-                WHERE uv.news_id IS NULL -- Only news not yet viewed by the user
+                WHERE uv.news_id IS NULL
                 AND n.moderation_status = 'approved'
                 AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
             """
@@ -616,10 +507,9 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
                 query += " AND n.published_at >= %s"
                 params.append(start_datetime)
             
-            if topics and len(topics) > 0: # Ensure topics list is not empty
-                # Corrected operator for TEXT[] array overlap
+            if topics and len(topics) > 0:
                 query += " AND n.ai_classified_topics && %s::text[]"
-                params.append(topics) # Pass the list directly for TEXT[] comparison
+                params.append(topics)
 
             query += " ORDER BY n.published_at DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
@@ -717,9 +607,6 @@ async def remove_user_subscription(user_id: int, topic: str):
             await cur.execute("DELETE FROM user_subscriptions WHERE user_id = %s AND topic = %s;", (user_id, topic))
             await conn.commit()
 
-class AddSourceStates(StatesGroup):
-    waiting_for_url = State()
-
 class NewsBrowse(StatesGroup):
     Browse_news = State()
     news_index = State()
@@ -750,7 +637,7 @@ def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'my_sources'), callback_data="my_sources"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"), InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'invite_friends'), callback_data="invite_friends"), InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'donate'), callback_data="donate"))
@@ -796,7 +683,7 @@ def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"), InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_ai_media_btn'), callback_data="create_ai_media"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu")) # Back to main menu
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
@@ -850,11 +737,9 @@ async def command_start_handler(message: Message, state: FSMContext):
                 unseen_count = await count_unseen_news(user.id)
                 if unseen_count > 0:
                     await message.answer(get_message(user_lang, 'what_new_digest_header', count=unseen_count))
-                    # For digest, summarize recent news, not necessarily from start of day
                     news_for_digest = await get_news_for_user(user.id, limit=3)
                     digest_text = ""
                     for i, news_item in enumerate(news_for_digest):
-                        # Use Gemini for a brief summary for the digest
                         summary = await call_gemini_api(f"Зроби коротке резюме новини українською мовою: {news_item.content}", user_telegram_id=message.from_user.id)
                         digest_text += get_message(user_lang, 'daily_digest_entry', idx=i+1, title=news_item.title, summary=summary, source_url=news_item.source_url)
                         await mark_news_as_viewed(user.id, news_item.id)
@@ -890,40 +775,6 @@ async def callback_help_menu(callback: CallbackQuery, state: FSMContext):
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'help_text'), parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard(user_lang))
     await callback.answer()
-
-@router.callback_query(F.data == "add_source")
-async def callback_add_source(callback: CallbackQuery, state: FSMContext):
-    user = await get_user_by_telegram_id(callback.from_user.id)
-    user_lang = user.language if user else 'uk'
-    await callback.message.edit_text(get_message(user_lang, 'add_source_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
-    await state.set_state(AddSourceStates.waiting_for_url)
-    await callback.answer()
-
-@router.message(AddSourceStates.waiting_for_url)
-async def process_source_url(message: Message, state: FSMContext):
-    user = await get_user_by_telegram_id(message.from_user.id)
-    user_lang = user.language if user else 'uk'
-    source_url = message.text
-    if not (source_url.startswith("http://") or source_url.startswith("https://")):
-        await message.answer(get_message(user_lang, 'invalid_url'))
-        return
-    try:
-        normalized_url = normalize_url(source_url)
-        pool = await get_db_pool()
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                parsed_url = HttpUrl(source_url)
-                source_name = parsed_url.host if parsed_url.host else get_message(user_lang, 'unknown_source')
-                await cur.execute(
-                    """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
-                    (user.id, source_name, source_url, normalized_url, 'web')
-                )
-                await conn.commit()
-        await message.answer(get_message(user_lang, 'source_added_success', source_url=source_url), reply_markup=get_main_menu_keyboard(user_lang))
-    except Exception as e:
-        logger.error(f"Error adding source '{source_url}': {e}", exc_info=True)
-        await message.answer(get_message(user_lang, 'add_source_error'), reply_markup=get_main_menu_keyboard(user_lang))
-    await state.clear()
 
 @router.callback_query(F.data == "my_sources")
 async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
@@ -973,7 +824,6 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
     user_lang = user.language if user else 'uk'
     user_subscriptions = await get_user_subscriptions(user.id)
 
-    # Get news from the beginning of the current day
     start_of_today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     all_news_ids = [n.id for n in await get_news_for_user(user.id, limit=100, offset=0, topics=user_subscriptions if user_subscriptions else None, start_datetime=start_of_today)]
 
@@ -1064,7 +914,6 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'read_source_btn'), url=str(news_item.source_url)))
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_functions_btn'), callback_data=f"ai_news_functions_menu_{news_item.id}"))
-    # Use builder.row() instead of builder.row_width() for consistent button layout
     keyboard_builder.row(*get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
     
     nav_buttons = []
@@ -1095,7 +944,6 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     
     if user:
         await mark_news_as_viewed(user.id, news_item.id)
-
 
 async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, chat_history: Optional[List[Dict]] = None, image_data: Optional[str] = None) -> Optional[str]:
     if not GEMINI_API_KEY:
@@ -1154,7 +1002,7 @@ async def check_premium_access(user_telegram_id: int) -> bool:
 async def handle_ai_news_functions_menu(callback: CallbackQuery):
     parts = callback.data.split('_')
     news_id = int(parts[-1])
-    page = int(parts[-2]) if len(parts) > 4 else 0 # This page parameter is now mostly vestigial
+    page = int(parts[-2]) if len(parts) > 4 else 0
     
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1405,7 +1253,6 @@ async def send_news_to_channel(news_item: News):
     try:
         if news_item.image_url:
             try:
-                # Attempt to send photo. If it fails, log and send as text.
                 await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
             except Exception as photo_e:
                 logger.error(f"Failed to send photo for news {news_item.id} to channel {channel_identifier} from URL {news_item.image_url}: {photo_e}. Sending message without photo.", exc_info=True)
@@ -1460,7 +1307,6 @@ async def fetch_and_post_news_task():
                     logger.info(f"Social Media parser for {source['source_url']} found no new news.")
             
             if news_data:
-                # Set user_id_for_source to None for automatically parsed news so they go to 'pending' moderation
                 news_data.update({'source_id': source['id'], 'source_name': source['source_name'], 'source_type': source['source_type'], 'user_id_for_source': None})
                 added_news_item = await add_news_to_db(news_data)
                 if added_news_item:
@@ -1538,7 +1384,6 @@ async def generate_invite_code() -> str:
 async def create_invite(inviter_user_db_id: int) -> Optional[str]:
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        # Explicitly set row_factory for this cursor to ensure dictionary return
         async with conn.cursor(row_factory=dict_row) as cur:
             invite_code = await generate_invite_code()
             try:
@@ -1552,7 +1397,6 @@ async def create_invite(inviter_user_db_id: int) -> Optional[str]:
 async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: str, chat_id: int):
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        # Explicitly set row_factory for this cursor to ensure dictionary return
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("""SELECT id, inviter_user_id FROM invitations WHERE invite_code = %s AND status = 'pending' AND used_at IS NULL;""", (invite_code,))
             invite_record = await cur.fetchone()
@@ -1590,7 +1434,6 @@ async def command_invite_handler(callback: CallbackQuery):
     
     invite_code = await create_invite(user.id)
     if invite_code:
-        # Await bot.get_me() to get the bot's username
         bot_info = await bot.get_me()
         invite_link = f"https://t.me/{bot_info.username}?start={invite_code}"
         await callback.message.edit_text(get_message(user_lang, 'your_invite_code', invite_code=invite_code, invite_link=hlink(get_message(user_lang, 'invite_link_label'), invite_link)), parse_mode=ParseMode.HTML, disable_web_page_preview=False, reply_markup=get_main_menu_keyboard(user_lang))
@@ -1779,7 +1622,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
         "image_url": image_url,
         "published_at": datetime.now(timezone.utc),
         "source_type": "youtube",
-        "user_id_for_source": None # This will make it pending for moderation
+        "user_id_for_source": None
     }
     added_news = await add_news_to_db(youtube_news_data)
     if added_news:
@@ -2205,7 +2048,6 @@ async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Ensure ai_classified_topics is passed as a list for TEXT[] column
             params = [news.source_id, news.title, news.content, str(news.source_url), normalize_url(str(news.source_url)), str(news.image_url) if news.image_url else None, news.published_at, news.moderation_status, news.expires_at, news.is_published_to_channel, news.ai_classified_topics, news_id]
             await cur.execute("""UPDATE news SET source_id = %s, title = %s, content = %s, source_url = %s, normalized_source_url = %s, image_url = %s, published_at = %s, moderation_status = %s, expires_at = %s, is_published_to_channel = %s, ai_classified_topics = %s WHERE id = %s RETURNING *;""", tuple(params))
             updated_rec = await cur.fetchone()
