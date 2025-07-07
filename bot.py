@@ -4,20 +4,20 @@ import logging.handlers
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from typing import List, Optional, Dict, Any, Union
 import random
 import io
 import base64
 import time
-from typing import List, Optional, Dict, Any
 
 from aiogram import Bot, Dispatcher, F, Router, types
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatAction
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.utils.markdown import hlink
+from aiogram.utils.markdown import hbold, hlink
 from aiogram.client.default import DefaultBotProperties
 
 from aiohttp import ClientSession
@@ -37,72 +37,87 @@ import telegram_parser
 import rss_parser
 import social_media_parser
 
+# Завантажуємо змінні оточення з файлу .env
 load_dotenv()
 
+# Конфігурація бота та API
 API_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(',') if x.strip()]
-NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "-1002766273069") # Встановлено Channel ID
+NEWS_CHANNEL_LINK = os.getenv("NEWS_CHANNEL_LINK", "https://t.me/newsone234")
+channel_ID = os.getenv("channel_ID") # Ця змінна не використовується, можна видалити або використати.
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 MONOBANK_CARD_NUMBER = "4441111153021484"
 HELP_BUY_CHANNEL_LINK = "https://t.me/+gT7TDOMh81M3YmY6"
 HELP_SELL_BOT_LINK = "https://t.me/BigmoneycreateBot"
 
+# Налаштування логування
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+# Файловий обробник для INFO логів
 file_handler = logging.handlers.RotatingFileHandler('bot.log', maxBytes=10*1024*1024, backupCount=5)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
+# Файловий обробник для ERROR логів
 error_file_handler = logging.handlers.RotatingFileHandler('errors.log', maxBytes=10*1024*1024, backupCount=5)
 error_file_handler.setLevel(logging.ERROR)
 error_file_handler.setFormatter(formatter)
 logger.addHandler(error_file_handler)
 
+# Обробник для виводу в консоль
 stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.INFO)
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 
+# Ліміт AI запитів для безкоштовних користувачів
 AI_REQUEST_LIMIT_DAILY_FREE = 3
 
+# Ініціалізація FastAPI
 app = FastAPI(title="Telegram AI News Bot API", version="1.0.0")
 app.mount("/static", StaticFiles(directory="."), name="static")
 
+# Залежність для перевірки API ключа адміністратора
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 async def get_api_key(api_key: str = Depends(api_key_header)):
+    """Перевіряє наявність та валідність API ключа адміністратора."""
     if not ADMIN_API_KEY:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ADMIN_API_KEY not configured.")
     if api_key is None or api_key != ADMIN_API_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key.")
     return api_key
 
+# Ініціалізація бота та диспетчера Aiogram
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+# Пул з'єднань до бази даних
 db_pool: Optional[AsyncConnectionPool] = None
 
 async def get_db_pool():
+    """Повертає або ініціалізує пул з'єднань до бази даних."""
     global db_pool
     if db_pool is None:
         try:
             db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
             async with db_pool.connection() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute("SELECT 1") # Перевірка з'єднання
             logger.info("DB pool initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize DB pool: {e}", exc_info=True)
             raise
     return db_pool
 
+# Pydantic моделі для валідації даних
 from pydantic import BaseModel, HttpUrl
 
 class News(BaseModel):
@@ -156,6 +171,7 @@ class Source(BaseModel):
     last_parsed: Optional[datetime] = None
     parse_frequency: str = 'hourly'
 
+# Словник з повідомленнями для різних мов
 MESSAGES = {
     'uk': {
         'welcome': "Привіт, {first_name}! Я ваш AI News Bot. Оберіть дію:",
@@ -280,7 +296,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Прослухати",
         'next_ai_page_btn': "➡️ Далі (AI)",
         'fact_check_btn': "✅ Факт (Преміум)",
-        'sentiment_trend_analysis_btn': "📊 AI Настрій", # Updated text for AI Media menu
+        'sentiment_trend_analysis_btn': "📊 Настрій (Преміум)",
         'bias_detection_btn': "🔍 Упередженість (Преміум)",
         'audience_summary_btn': "📝 Резюме для аудиторії (Преміум)",
         'historical_analogues_btn': "📜 Аналоги (Преміум)",
@@ -288,7 +304,7 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Грошовий аналіз (Преміум)",
         'prev_ai_page_btn': "⬅️ Назад (AI)",
         'bookmark_add_btn': "❤️ Обране",
-        'comments_btn': "💬 Коментарі", # New button
+        'comments_btn': "💬 Коментарі",
         'english_lang': "🇬🇧 Англійська",
         'polish_lang': "🇵🇱 Польська",
         'german_lang': "🇩🇪 Німецька",
@@ -335,11 +351,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Ігор Лібсіц",
         'ask_expert_question_prompt': "Ваше запитання до {expert_name}:",
         'expert_response_label': "Відповідь {expert_name}:",
-        'price_analysis_prompt': "💰 AI Аналіз Цін", # Updated text for AI Media menu
+        'price_analysis_prompt': "Опис товару та, якщо є, фото:",
         'price_analysis_generating': "Аналізую ціну...",
         'price_analysis_result': "<b>Аналіз ціни:</b>\n{result}",
         'ai_media_menu_prompt': "AI-медіа функції:",
-        'generate_ai_news_btn': "📝 AI Генерація Новин", # Updated text for AI Media menu
+        'generate_ai_news_btn': "📝 AI-новина (тренди)",
         'youtube_to_news_btn': "▶️ YouTube → Новина",
         'create_filtered_channel_btn': "➕ Створити мій канал",
         'create_ai_media_btn': "🤖 Створити AI Медіа",
@@ -396,10 +412,7 @@ MESSAGES = {
         'help_sell_btn': "🤝 Допоможи продати",
         'help_buy_btn': "🛒 Допоможи купити",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
-        'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'settings_btn': "⚙️ Налаштування", # New button
-        'help_btn': "❓ Допомога", # New button
-        'language_btn': "🌐 Мова", # New button
+        'help_buy_message': "Check the channel with best offers: {channel_link}"
     },
     'en': {
         'welcome': "Hello, {first_name}! I'm your AI News Bot. Choose an action:",
@@ -524,7 +537,7 @@ MESSAGES = {
         'listen_news_btn': "🔊 Listen",
         'next_ai_page_btn': "➡️ Next (AI)",
         'fact_check_btn': "✅ Fact Check (Premium)",
-        'sentiment_trend_analysis_btn': "📊 AI Sentiment Trend", # Updated text for AI Media menu
+        'sentiment_trend_analysis_btn': "📊 Sentiment Trend (Premium)",
         'bias_detection_btn': "🔍 Bias Detection (Premium)",
         'audience_summary_btn': "📝 Audience Summary (Premium)",
         'historical_analogues_btn': "📜 Analogues (Premium)",
@@ -532,15 +545,15 @@ MESSAGES = {
         'monetary_impact_btn': "💰 Monetary Analysis (Premium)",
         'prev_ai_page_btn': "⬅️ Back (AI)",
         'bookmark_add_btn': "❤️ Bookmark",
-        'comments_btn': "💬 Comments", # New button
-        'english_lang': "🇬🇧 Англійська",
-        'polish_lang': "🇵🇱 Польська",
-        'german_lang': "🇩🇪 Німецька",
-        'spanish_lang': "🇪🇸 Іспанська",
-        'french_lang': "🇫🇷 Французька",
-        'ukrainian_lang': "🇺🇦 Українська",
-        'back_to_ai_btn': "⬅️ До AI",
-        'ask_free_ai_btn': "💬 Запитай AI",
+        'comments_btn': "💬 Comments",
+        'english_lang': "🇬🇧 English",
+        'polish_lang': "🇵🇱 Polish",
+        'german_lang': "🇩🇪 German",
+        'spanish_lang': "🇪🇸 Spanish",
+        'french_lang': "🇫🇷 French",
+        'ukrainian_lang': "🇺🇦 Ukrainian",
+        'back_to_ai_btn': "⬅️ Back to AI",
+        'ask_free_ai_btn': "💬 Ask AI",
         'news_channel_link_error': "Invalid channel link.",
         'news_channel_link_warning': "Invalid link format.",
         'news_published_success': "News '{title}' published to channel {identifier}.",
@@ -579,11 +592,11 @@ MESSAGES = {
         'expert_libsits_btn': "🧠 Igor Libsits",
         'ask_expert_question_prompt': "Your question to {expert_name}:",
         'expert_response_label': "Response from {expert_name}:",
-        'price_analysis_prompt': "💰 AI Price Analysis", # Updated text for AI Media menu
+        'price_analysis_prompt': "Product description and photo:",
         'price_analysis_generating': "Analyzing price...",
         'price_analysis_result': "<b>Price Analysis:</b>\n{result}",
         'ai_media_menu_prompt': "AI Media Functions:",
-        'generate_ai_news_btn': "📝 AI News Generation", # Updated text for AI Media menu
+        'generate_ai_news_btn': "📝 AI News (trends)",
         'youtube_to_news_btn': "▶️ YouTube → News",
         'create_filtered_channel_btn': "➕ Create My Channel",
         'create_ai_media_btn': "🤖 Create AI Media",
@@ -607,7 +620,7 @@ MESSAGES = {
         'trust_index_calculating': "Calculating trust index...",
         'trust_index_result': "<b>Trust Index:</b>\n{result}",
         'long_term_connections_generating': "Searching connections...",
-        'long_term_connections_result': "<b>Long-term Connections:</b>\n{result}",
+        'long_term_connections_result': "<b>Long-Term Connections:</b>\n{result}",
         'ai_prediction_generating': "Generating AI prediction...",
         'ai_prediction_result': "<b>AI Prediction:</b>\n{result}",
         'onboarding_step_1': "Step 1: Add source '➕ Add Source'.",
@@ -640,17 +653,17 @@ MESSAGES = {
         'help_sell_btn': "🤝 Help Sell",
         'help_buy_btn': "🛒 Help Buy",
         'help_sell_message': "Contact our sales assistant bot: {bot_link}",
-        'help_buy_message': "Check the channel with best offers: {channel_link}",
-        'settings_btn': "⚙️ Settings", # New button
-        'help_btn': "❓ Help", # New button
-        'language_btn': "🌐 Language", # New button
+        'help_buy_message': "Check the channel with best offers: {channel_link}"
     }
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
+    """Повертає повідомлення для користувача на основі його мови."""
     return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, f"MISSING_TRANSLATION_{key}").format(**kwargs)
 
+# Функції взаємодії з базою даних
 async def create_or_update_user(user_data: types.User) -> User:
+    """Створює або оновлює користувача в базі даних."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -673,6 +686,7 @@ async def create_or_update_user(user_data: types.User) -> User:
             return User(**await cur.fetchone())
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
+    """Отримує користувача з бази даних за його Telegram ID."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -681,6 +695,7 @@ async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
             return User(**user_record) if user_record else None
 
 async def update_user_premium_status(user_id: int, is_premium: bool):
+    """Оновлює преміум-статус користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -688,6 +703,7 @@ async def update_user_premium_status(user_id: int, is_premium: bool):
             await conn.commit()
 
 async def update_user_digest_frequency(user_id: int, frequency: str):
+    """Оновлює частоту дайджестів для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -695,6 +711,7 @@ async def update_user_digest_frequency(user_id: int, frequency: str):
             await conn.commit()
 
 async def update_user_ai_request_count(user_id: int, count: int, last_request_date: datetime):
+    """Оновлює лічильник AI запитів для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -702,13 +719,11 @@ async def update_user_ai_request_count(user_id: int, count: int, last_request_da
             await conn.commit()
 
 async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
+    """Додає новину до бази даних, включаючи інформацію про джерело."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
-            if await cur.fetchone():
-                return None # News already exists
-
+            # Отримання або створення джерела
             await cur.execute("SELECT id FROM sources WHERE source_url = %s", (str(news_data['source_url']),))
             source_record = await cur.fetchone()
             source_id = None
@@ -724,15 +739,23 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
                 )
                 source_id = (await cur.fetchone())['id']
 
+            # Перевірка на дублікат новини за URL джерела
+            await cur.execute("SELECT id FROM news WHERE source_url = %s", (str(news_data['source_url']),))
+            if await cur.fetchone():
+                return None # Новина вже існує
+
+            # Визначення статусу модерації
             moderation_status = 'approved' if news_data.get('user_id_for_source') is None else 'pending'
             
+            # Додавання новини
             await cur.execute(
                 """INSERT INTO news (source_id, title, content, source_url, image_url, published_at, ai_summary, ai_classified_topics, moderation_status, is_published_to_channel) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *;""",
-                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), str(news_data.get('image_url')) if news_data.get('image_url') else None, news_data['published_at'], news_data.get('ai_summary'), json.dumps(news_data.get('ai_classified_topics')) if news_data.get('ai_classified_topics') else None, moderation_status, False)
+                (source_id, news_data['title'], news_data['content'], str(news_data['source_url']), str(news_data['image_url']) if news_data.get('image_url') else None, news_data['published_at'], news_data.get('ai_summary'), json.dumps(news_data.get('ai_classified_topics')) if news_data.get('ai_classified_topics') else None, moderation_status, False)
             )
             return News(**await cur.fetchone())
 
 async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topics: Optional[List[str]] = None) -> List[News]:
+    """Отримує новини для користувача, фільтруючи за переглядами та темами."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -745,14 +768,9 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
             params = [user_id]
             
             if topics:
-                topic_conditions = []
-                for topic in topics:
-                    # Use the '?' operator for checking if a JSONB array contains a specific string element
-                    topic_conditions.append("ai_classified_topics ? %s")
-                    params.append(topic) # Add topic directly as a parameter
-                
-                if topic_conditions:
-                    query += f" AND ({' OR '.join(topic_conditions)})"
+                # Додаємо умови для фільтрації за темами
+                topic_conditions = [f"ai_classified_topics @> '[\"{topic}\"]'" for topic in topics]
+                query += f" AND ({' OR '.join(topic_conditions)})"
 
             query += " ORDER BY published_at DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
@@ -761,6 +779,7 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
             return [News(**record) for record in await cur.fetchall()]
 
 async def get_news_to_publish(limit: int = 1) -> List[News]:
+    """Отримує новини, готові до публікації в канал."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -768,6 +787,7 @@ async def get_news_to_publish(limit: int = 1) -> List[News]:
             return [News(**record) for record in await cur.fetchall()]
 
 async def mark_news_as_published_to_channel(news_id: int):
+    """Позначає новину як опубліковану в канал."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -776,6 +796,7 @@ async def mark_news_as_published_to_channel(news_id: int):
             logger.info(f"News {news_id} marked as published to channel.")
 
 async def count_unseen_news(user_id: int) -> int:
+    """Рахує кількість непрочитаних новин для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -783,6 +804,7 @@ async def count_unseen_news(user_id: int) -> int:
             return (await cur.fetchone())['count']
 
 async def mark_news_as_viewed(user_id: int, news_id: int):
+    """Позначає новину як прочитану користувачем."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -790,6 +812,7 @@ async def mark_news_as_viewed(user_id: int, news_id: int):
             await conn.commit()
 
 async def get_news_by_id(news_id: int) -> Optional[News]:
+    """Отримує новину за її ID."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -798,6 +821,7 @@ async def get_news_by_id(news_id: int) -> Optional[News]:
             return News(**news_record) if news_record else None
 
 async def get_source_by_id(source_id: int):
+    """Отримує джерело за його ID."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -805,6 +829,7 @@ async def get_source_by_id(source_id: int):
             return await cur.fetchone()
 
 async def get_sources_by_user_id(user_id: int) -> List[Source]:
+    """Отримує список джерел, доданих користувачем."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -812,6 +837,7 @@ async def get_sources_by_user_id(user_id: int) -> List[Source]:
             return [Source(**record) for record in await cur.fetchall()]
 
 async def delete_source_by_id(source_id: int, user_id: int) -> bool:
+    """Видаляє джерело за ID та ID користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -820,6 +846,7 @@ async def delete_source_by_id(source_id: int, user_id: int) -> bool:
             return cur.rowcount > 0
 
 async def add_user_news_reaction(user_id: int, news_id: int, reaction_type: str):
+    """Додає або оновлює реакцію користувача на новину."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -830,6 +857,7 @@ async def add_user_news_reaction(user_id: int, news_id: int, reaction_type: str)
             await conn.commit()
 
 async def get_user_subscriptions(user_id: int) -> List[str]:
+    """Отримує список тем, на які підписаний користувач."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -837,6 +865,7 @@ async def get_user_subscriptions(user_id: int) -> List[str]:
             return [row['topic'] for row in await cur.fetchall()]
 
 async def add_user_subscription(user_id: int, topic: str):
+    """Додає підписку на тему для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -844,20 +873,22 @@ async def add_user_subscription(user_id: int, topic: str):
             await conn.commit()
 
 async def remove_user_subscription(user_id: int, topic: str):
+    """Видаляє підписку на тему для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("DELETE FROM user_subscriptions WHERE user_id = %s AND topic = %s;", (user_id, topic))
             await conn.commit()
 
+# FSM (Finite State Machine) стани для Aiogram
 class AddSourceStates(StatesGroup):
     waiting_for_url = State()
 
 class NewsBrowse(StatesGroup):
     Browse_news = State()
-    news_index = State()
-    news_ids = State()
-    last_message_id = State()
+    news_index = State() # Поточний індекс новини
+    news_ids = State() # Список ID новин для перегляду
+    last_message_id = State() # ID останнього повідомлення з новиною для редагування/видалення
 
 class AIAssistant(StatesGroup):
     waiting_for_question = State()
@@ -880,18 +911,20 @@ class SubscriptionStates(StatesGroup):
     waiting_for_topics_to_add = State()
     waiting_for_topic_to_remove = State()
 
+# Функції для створення Inline клавіатур
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру головного меню."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_news'), callback_data="my_news"), InlineKeyboardButton(text=get_message(user_lang, 'add_source'), callback_data="add_source"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'settings_btn'), callback_data="settings_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"), InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'my_sources'), callback_data="my_sources"), InlineKeyboardButton(text=get_message(user_lang, 'ask_free_ai'), callback_data="ask_free_ai"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_media_menu'), callback_data="ai_media_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'invite_friends'), callback_data="invite_friends"), InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'donate'), callback_data="donate"))
     return builder.as_markup()
 
 def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру для реакцій на новину."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text=get_message(user_lang, 'reaction_interesting'), callback_data=f"react_news_interesting_{news_id}"),
@@ -901,6 +934,7 @@ def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardM
     return builder.as_markup()
 
 def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру AI функцій для новини з пагінацією."""
     builder = InlineKeyboardBuilder()
     if page == 0:
         builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data=f"ai_summary_select_type_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
@@ -915,6 +949,7 @@ def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) 
     return builder.as_markup()
 
 def get_translate_language_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру для вибору мови перекладу."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'english_lang'), callback_data=f"translate_to_en_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'ukrainian_lang'), callback_data=f"translate_to_uk_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'polish_lang'), callback_data=f"translate_to_pl_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'german_lang'), callback_data=f"translate_to_de_{news_id}"))
@@ -923,6 +958,7 @@ def get_translate_language_keyboard(news_id: int, user_lang: str) -> InlineKeybo
     return builder.as_markup()
 
 def get_smart_summary_type_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру для вибору типу AI резюме."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_smart_summary_1_sentence'), callback_data=f"smart_summary_1_sentence_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_smart_summary_3_facts'), callback_data=f"smart_summary_3_facts_{news_id}"))
@@ -931,6 +967,7 @@ def get_smart_summary_type_keyboard(news_id: int, user_lang: str) -> InlineKeybo
     return builder.as_markup()
 
 def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру для вибору експерта AI."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'expert_portnikov_btn'), callback_data="ask_expert_portnikov"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'expert_libsits_btn'), callback_data="ask_expert_libsits"))
@@ -938,16 +975,18 @@ def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру меню AI медіа функцій."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_summary_btn'), callback_data="ai_summary_select_type_0"), InlineKeyboardButton(text=get_message(user_lang, 'classify_topics_btn'), callback_data="classify_topics_0")) # Dummy news_id for these
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'sentiment_trend_analysis_btn'), callback_data="sentiment_trend_analysis_0"), InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'subscribe_menu'), callback_data="subscribe_menu"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'comments_btn'), callback_data="comments_menu")) # Assuming comments_menu exists
-    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'back_to_ai_btn'), callback_data="main_menu")) # Back to main menu
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'generate_ai_news_btn'), callback_data="generate_ai_news"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'create_ai_media_btn'), callback_data="create_ai_media"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'analytics_menu_prompt'), callback_data="analytics_menu"))
+    builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру меню аналітики."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'infographics_btn'), callback_data="infographics"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'trust_index_btn'), callback_data="trust_index"))
@@ -957,6 +996,7 @@ def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_price_analysis_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру для аналізу цін."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="init_price_analysis"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
@@ -965,22 +1005,27 @@ def get_price_analysis_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_subscription_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    """Повертає клавіатуру меню підписок."""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'add_subscription_btn'), callback_data="add_subscription"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'remove_subscription_btn'), callback_data="remove_subscription"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'main_menu_btn'), callback_data="main_menu"))
     return builder.as_markup()
 
+# Обробники команд та колбеків
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext):
+    """Обробляє команду /start."""
     await state.clear()
     user = await create_or_update_user(message.from_user)
     user_lang = user.language if user else 'uk'
 
+    # Обробка інвайт-коду, якщо він є в команді /start
     if message.text and len(message.text.split()) > 1:
         invite_code = message.text.split()[1]
         await handle_invite_code(user.id, invite_code, user_lang, message.chat.id)
     
+    # Онбордінг для нових користувачів
     if user and (datetime.now(timezone.utc) - user.created_at).total_seconds() < 60:
         onboarding_messages = [
             get_message(user_lang, 'welcome', first_name=message.from_user.first_name),
@@ -991,6 +1036,7 @@ async def command_start_handler(message: Message, state: FSMContext):
         for msg_text in onboarding_messages:
             await message.answer(msg_text)
     else:
+        # Перевірка на пропущені новини для давніх користувачів
         if user:
             last_active_dt = user.last_active.replace(tzinfo=timezone.utc) if user.last_active else datetime.now(timezone.utc)
             time_since_last_active = datetime.now(timezone.utc) - last_active_dt
@@ -1001,6 +1047,7 @@ async def command_start_handler(message: Message, state: FSMContext):
                     news_for_digest = await get_news_for_user(user.id, limit=3)
                     digest_text = ""
                     for i, news_item in enumerate(news_for_digest):
+                        # Генерація короткого резюме для дайджесту
                         summary = await call_gemini_api(f"Зроби коротке резюме новини українською мовою: {news_item.content}", user_telegram_id=message.from_user.id)
                         digest_text += get_message(user_lang, 'daily_digest_entry', idx=i+1, title=news_item.title, summary=summary, source_url=news_item.source_url)
                         await mark_news_as_viewed(user.id, news_item.id)
@@ -1010,6 +1057,7 @@ async def command_start_handler(message: Message, state: FSMContext):
 
 @router.message(Command("menu"))
 async def command_menu_handler(message: Message, state: FSMContext):
+    """Обробляє команду /menu."""
     await state.clear()
     user = await create_or_update_user(message.from_user)
     user_lang = user.language if user else 'uk'
@@ -1017,6 +1065,7 @@ async def command_menu_handler(message: Message, state: FSMContext):
 
 @router.message(Command("cancel"))
 async def command_cancel_handler(message: Message, state: FSMContext):
+    """Обробляє команду /cancel."""
     await state.clear()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1024,6 +1073,7 @@ async def command_cancel_handler(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
+    """Обробляє колбек "main_menu"."""
     await state.clear()
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1032,6 +1082,7 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "add_source")
 async def callback_add_source(callback: CallbackQuery, state: FSMContext):
+    """Запитує URL для додавання джерела."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'add_source_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1040,6 +1091,7 @@ async def callback_add_source(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddSourceStates.waiting_for_url)
 async def process_source_url(message: Message, state: FSMContext):
+    """Обробляє отриманий URL джерела."""
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
     source_url = message.text
@@ -1065,6 +1117,7 @@ async def process_source_url(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "my_sources")
 async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
+    """Відображає список джерел користувача."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     sources = await get_sources_by_user_id(user.id)
@@ -1086,6 +1139,7 @@ async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text.startswith("/source_delete_"))
 async def handle_delete_source_command(message: Message):
+    """Обробляє команду видалення джерела."""
     try:
         source_id = int(message.text.split('_')[-1])
         user = await get_user_by_telegram_id(message.from_user.id)
@@ -1107,10 +1161,12 @@ async def handle_delete_source_command(message: Message):
 
 @router.callback_query(F.data == "my_news")
 async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
+    """Починає перегляд новин для користувача."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_subscriptions = await get_user_subscriptions(user.id)
 
+    # Отримуємо всі новини, які відповідають підпискам користувача
     all_news_ids = [n.id for n in await get_news_for_user(user.id, limit=100, offset=0, topics=user_subscriptions if user_subscriptions else None)]
 
     if not all_news_ids:
@@ -1118,20 +1174,24 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
+    # Видаляємо попереднє повідомлення, якщо воно було
     current_state_data = await state.get_data()
     last_message_id = current_state_data.get('last_message_id')
     if last_message_id:
         try: await bot.delete_message(chat_id=callback.message.chat.id, message_id=last_message_id)
         except Exception as e: logger.warning(f"Failed to delete previous message {last_message_id}: {e}")
     
+    # Зберігаємо стан для навігації по новинах
     await state.update_data(current_news_index=0, news_ids=all_news_ids)
     await state.set_state(NewsBrowse.Browse_news)
     
+    # Відправляємо першу новину
     await send_news_to_user(callback.message.chat.id, all_news_ids[0], 0, len(all_news_ids), state)
     await callback.answer()
 
 @router.callback_query(NewsBrowse.Browse_news, F.data == "next_news")
 async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
+    """Перехід до наступної новини."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_data = await state.get_data()
@@ -1156,6 +1216,7 @@ async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(NewsBrowse.Browse_news, F.data == "prev_news")
 async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
+    """Перехід до попередньої новини."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_data = await state.get_data()
@@ -1179,6 +1240,7 @@ async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 async def send_news_to_user(chat_id: int, news_id: int, current_index: int, total_news: int, state: FSMContext):
+    """Відправляє новину користувачеві з кнопками навігації та AI функцій."""
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(chat_id)
     user_lang = user.language if user else 'uk'
@@ -1200,9 +1262,9 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
     keyboard_builder = InlineKeyboardBuilder()
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'read_source_btn'), url=str(news_item.source_url)))
     keyboard_builder.row(InlineKeyboardButton(text=get_message(user_lang, 'ai_functions_btn'), callback_data=f"ai_news_functions_menu_{news_item.id}"))
-    # Fix: Use builder.row() instead of builder.row_width()
-    keyboard_builder.row(*get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
+    keyboard_builder.row_width(3, *get_news_reactions_keyboard(news_item.id, user_lang).inline_keyboard[0])
     
+    # Кнопки навігації
     nav_buttons = []
     if current_index > 0:
         nav_buttons.append(InlineKeyboardButton(text=get_message(user_lang, 'prev_btn'), callback_data="prev_news"))
@@ -1220,9 +1282,11 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
             msg = await bot.send_photo(chat_id=chat_id, photo=str(news_item.image_url), caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.warning(f"Failed to send photo for news {news_id} from URL {news_item.image_url}: {e}. Sending with placeholder.")
+            # Використання placeholder.co для динамічного плейсхолдера
             placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
             msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text + f"\n(Original image URL: {news_item.image_url})", reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     else:
+        # Якщо зображення немає, відправляємо з плейсхолдером
         placeholder_image_url = "https://placehold.co/600x400/CCCCCC/000000?text=No+Image"
         msg = await bot.send_photo(chat_id=chat_id, photo=placeholder_image_url, caption=text, reply_markup=keyboard_builder.as_markup(), parse_mode=ParseMode.HTML)
     
@@ -1234,6 +1298,7 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
 
 @router.callback_query(F.data.startswith("react_news_"))
 async def handle_news_reaction(callback: CallbackQuery, state: FSMContext):
+    """Обробляє реакції користувачів на новини."""
     parts = callback.data.split('_')
     reaction_type = parts[2]
     news_id = int(parts[3])
@@ -1247,46 +1312,55 @@ async def handle_news_reaction(callback: CallbackQuery, state: FSMContext):
     await add_user_news_reaction(user.id, news_id, reaction_type)
 
     if reaction_type == 'delete':
-        await mark_news_as_viewed(user.id, news_id)
+        await mark_news_as_viewed(user.id, news_id) # Помічаємо як прочитану, щоб не показувати знову
         await callback.answer(get_message(user_lang, 'reaction_deleted'), show_alert=True)
         
+        # Перехід до наступної новини після видалення
         user_data = await state.get_data()
         news_ids = user_data.get("news_ids", [])
         current_index = user_data.get("current_news_index", 0)
         
+        # Видаляємо поточну новину зі списку news_ids
         if news_id in news_ids:
             news_ids.remove(news_id)
             await state.update_data(news_ids=news_ids)
+            # Якщо поточний індекс тепер за межами нового списку, зменшуємо його
             if current_index >= len(news_ids) and len(news_ids) > 0:
                 current_index = len(news_ids) - 1
                 await state.update_data(current_news_index=current_index)
 
-        if news_ids:
+        if news_ids: # Якщо є ще новини
             await send_news_to_user(callback.message.chat.id, news_ids[current_index], current_index, len(news_ids), state)
-        else:
+        else: # Якщо новин більше немає
             await callback.message.edit_text(get_message(user_lang, 'no_more_news'), reply_markup=get_main_menu_keyboard(user_lang))
     else:
         await callback.answer(get_message(user_lang, 'reaction_saved'), show_alert=True)
     
+    # Оновлюємо повідомлення з AI функціями, якщо воно було
     current_state_data = await state.get_data()
     last_message_id = current_state_data.get('last_message_id')
     if last_message_id:
         try:
+            # Спроба оновити повідомлення, якщо воно ще існує
             await bot.edit_message_reply_markup(chat_id=callback.message.chat.id, message_id=last_message_id, reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
         except Exception as e:
             logger.warning(f"Failed to edit message reply markup {last_message_id} after reaction: {e}")
     await callback.answer()
 
 
+# AI Функції
 async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, chat_history: Optional[List[Dict]] = None, image_data: Optional[str] = None) -> Optional[str]:
+    """Викликає Gemini API для генерації тексту або аналізу зображень."""
     if not GEMINI_API_KEY:
         return "AI is not available. Please configure GEMINI_API_KEY."
 
+    # Перевірка ліміту AI запитів для безкоштовних користувачів
     if user_telegram_id:
         user = await get_user_by_telegram_id(user_telegram_id)
         if user and not user.is_premium and not user.is_pro:
             today = datetime.now(timezone.utc).date()
             if user.ai_last_request_date and user.ai_last_request_date.date() != today:
+                # Скидаємо лічильник, якщо дата змінилася
                 await update_user_ai_request_count(user.id, 0, datetime.now(timezone.utc))
                 user.ai_requests_today = 0
             
@@ -1299,10 +1373,12 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
     headers = {"Content-Type": "application/json"}
     
     contents = []
+    # Додаємо історію чату, якщо вона є
     if chat_history:
         for entry in chat_history:
             contents.append({"role": entry["role"], "parts": [{"text": entry["text"]}]})
     
+    # Додаємо поточний запит та зображення, якщо є
     parts = [{"text": prompt}]
     if image_data:
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": image_data}})
@@ -1317,7 +1393,7 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
                 if response.status == 429:
                     logger.warning("Gemini API rate limit exceeded.")
                     return "Too many AI requests. Please try again later."
-                response.raise_for_status()
+                response.raise_for_status() # Викликає виняток для статусів 4xx/5xx
                 data = await response.json()
                 if data and data.get("candidates"):
                     return data["candidates"][0]["content"]["parts"][0]["text"]
@@ -1328,14 +1404,16 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
         return "An error occurred with AI. Please try again later."
 
 async def check_premium_access(user_telegram_id: int) -> bool:
+    """Перевіряє, чи має користувач преміум або PRO доступ."""
     user = await get_user_by_telegram_id(user_telegram_id)
     return user and (user.is_premium or user.is_pro)
 
 @router.callback_query(F.data.startswith("ai_news_functions_menu_"))
 async def handle_ai_news_functions_menu(callback: CallbackQuery):
+    """Відображає меню AI функцій для новини."""
     parts = callback.data.split('_')
     news_id = int(parts[-1])
-    page = int(parts[-2]) if len(parts) > 4 else 0
+    page = int(parts[-2]) if len(parts) > 4 else 0 # Визначаємо сторінку, якщо вона вказана
     
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1345,6 +1423,7 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ai_summary_select_type_"))
 async def handle_ai_summary_select_type(callback: CallbackQuery, state: FSMContext):
+    """Запитує тип резюме для AI."""
     news_id = int(callback.data.split('_')[4])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1355,6 +1434,7 @@ async def handle_ai_summary_select_type(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(AIAssistant.waiting_for_summary_type, F.data.startswith("smart_summary_"))
 async def handle_smart_summary(callback: CallbackQuery, state: FSMContext):
+    """Генерує AI резюме обраного типу."""
     parts = callback.data.split('_')
     summary_type_key = parts[2]
     news_id = int(parts[3])
@@ -1388,6 +1468,7 @@ async def handle_smart_summary(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("translate_select_lang_"))
 async def handle_translate_select_language(callback: CallbackQuery, state: FSMContext):
+    """Запитує мову для перекладу новини."""
     news_id = int(callback.data.split('_')[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1398,6 +1479,7 @@ async def handle_translate_select_language(callback: CallbackQuery, state: FSMCo
 
 @router.callback_query(AIAssistant.waiting_for_translate_language, F.data.startswith("translate_to_"))
 async def handle_translate_to_language(callback: CallbackQuery, state: FSMContext):
+    """Перекладає новину на обрану мову."""
     parts = callback.data.split('_')
     lang_code = parts[2]
     news_id = int(parts[3])
@@ -1421,6 +1503,7 @@ async def handle_translate_to_language(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(F.data.startswith("listen_news_"))
 async def handle_listen_news(callback: CallbackQuery):
+    """Генерує та відправляє аудіоверсію новини."""
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1433,13 +1516,14 @@ async def handle_listen_news(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'generating_audio'))
     try:
         text_to_speak = f"{news_item.title}. {news_item.content}"
+        # Використовуємо мову користувача для gTTS
         tts = gTTS(text=text_to_speak, lang=user_lang) 
         audio_buffer = io.BytesIO()
         await asyncio.to_thread(tts.write_to_fp, audio_buffer)
         audio_buffer.seek(0)
         
         await bot.send_voice(chat_id=callback.message.chat.id, voice=BufferedInputFile(audio_buffer.getvalue(), filename=f"news_{news_id}.mp3"), caption=get_message(user_lang, 'audio_news_caption', title=news_item.title), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
-        await callback.message.delete()
+        await callback.message.delete() # Видаляємо повідомлення "Генерую аудіо..."
     except Exception as e:
         logger.error(f"Error generating or sending audio for news {news_id}: {e}", exc_info=True)
         await callback.message.edit_text(get_message(user_lang, 'audio_error'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
@@ -1447,6 +1531,7 @@ async def handle_listen_news(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ask_news_ai_"))
 async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
+    """Запитує питання до AI щодо конкретної новини."""
     news_id = int(callback.data.split('_')[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1457,6 +1542,7 @@ async def handle_ask_news_ai(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_question)
 async def process_ai_question(message: Message, state: FSMContext):
+    """Обробляє питання користувача до AI щодо новини."""
     user_question = message.text
     user_data = await state.get_data()
     news_id = user_data.get("waiting_for_news_id_for_ai")
@@ -1490,15 +1576,17 @@ async def process_ai_question(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "ask_free_ai")
 async def handle_ask_free_ai(callback: CallbackQuery, state: FSMContext):
+    """Запитує питання до вільного AI (без прив'язки до новини)."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
     await state.set_state(AIAssistant.waiting_for_free_question)
-    await state.update_data(ai_chat_history=[])
+    await state.update_data(ai_chat_history=[]) # Ініціалізуємо історію чату для вільного AI
     await callback.answer()
 
 @router.message(AIAssistant.waiting_for_free_question)
 async def process_free_ai_question(message: Message, state: FSMContext):
+    """Обробляє питання користувача до вільного AI."""
     user_question = message.text
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1515,10 +1603,11 @@ async def process_free_ai_question(message: Message, state: FSMContext):
     await state.update_data(ai_chat_history=chat_history)
     
     await message.answer(get_message(user_lang, 'ai_response_label') + f"\n{ai_response}", reply_markup=get_main_menu_keyboard(user_lang))
-    await state.clear()
+    await state.clear() # Очищаємо стан після відповіді
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
+    """Витягує ключові сутності з новини."""
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1539,6 +1628,7 @@ async def handle_extract_entities(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("explain_term_"))
 async def handle_explain_term(callback: CallbackQuery, state: FSMContext):
+    """Запитує термін для пояснення в контексті новини."""
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1558,6 +1648,7 @@ async def handle_explain_term(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_term_to_explain)
 async def process_term_explanation(message: Message, state: FSMContext):
+    """Пояснює термін у контексті новини."""
     term = message.text
     user_data = await state.get_data()
     news_id = user_data.get("waiting_for_news_id_for_ai")
@@ -1583,22 +1674,12 @@ async def process_term_explanation(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("classify_topics_"))
 async def handle_classify_topics(callback: CallbackQuery):
+    """Класифікує новину за темами."""
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
-    if news_id == 0: # Handle dummy news_id from AI Media menu
-        if not await check_premium_access(callback.from_user.id):
-            await callback.answer(get_message(user_lang, 'ai_function_premium_only'), show_alert=True)
-            return
-        await callback.message.edit_text(get_message(user_lang, 'classifying_topics'))
-        # For general topic classification, we might need to ask for text or use a general trend analysis
-        # For now, let's just return a placeholder or prompt for text
-        await callback.message.edit_text(get_message(user_lang, 'ask_free_ai_prompt') + "\n(Надішліть текст для класифікації тем)", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
-        await callback.answer()
-        return
-
     if not news_item:
         await callback.answer(get_message(user_lang, 'news_not_found'), show_alert=True)
         return
@@ -1614,6 +1695,7 @@ async def handle_classify_topics(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
 async def handle_fact_check_news(callback: CallbackQuery):
+    """Виконує перевірку фактів для новини."""
     news_id = int(callback.data.split('_')[3])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1634,6 +1716,7 @@ async def handle_fact_check_news(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("bookmark_news_"))
 async def handle_bookmark_news(callback: CallbackQuery, state: FSMContext):
+    """Додає або видаляє новину із закладок."""
     parts = callback.data.split('_')
     action = parts[2]
     news_id = int(parts[3])
@@ -1669,6 +1752,7 @@ async def handle_bookmark_news(callback: CallbackQuery, state: FSMContext):
                     await callback.answer(get_message(user_lang, 'bookmark_remove_error'), show_alert=True)
             await conn.commit()
     
+    # Оновлюємо клавіатуру AI функцій після дії
     current_state_data = await state.get_data()
     last_message_id = current_state_data.get('last_message_id')
     if last_message_id:
@@ -1682,6 +1766,7 @@ async def handle_bookmark_news(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("report_fake_news_"))
 async def handle_report_fake_news(callback: CallbackQuery):
+    """Обробляє репорт про фейкову новину."""
     news_id = int(callback.data.split('_')[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1693,6 +1778,7 @@ async def handle_report_fake_news(callback: CallbackQuery):
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
+            # Перевірка, чи репорт вже був надісланий
             await cur.execute("SELECT 1 FROM reports WHERE user_id = %s AND target_type = 'news' AND target_id = %s;", (user.id, news_id))
             if await cur.fetchone():
                 await callback.answer(get_message(user_lang, 'report_already_sent'), show_alert=True)
@@ -1705,22 +1791,38 @@ async def handle_report_fake_news(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'report_action_done'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
 
 async def send_news_to_channel(news_item: News):
+    """Відправляє новину в Telegram канал."""
     if not NEWS_CHANNEL_LINK:
         logger.warning("NEWS_CHANNEL_LINK is not configured. Skipping channel post.")
         return
     
     channel_identifier = NEWS_CHANNEL_LINK
+    if 't.me/' in NEWS_CHANNEL_LINK:
+        channel_identifier = NEWS_CHANNEL_LINK.split('/')[-1]
+    
+    # Перевірка формату channel_identifier для Telegram API
+    if channel_identifier.startswith('-100') and channel_identifier[1:].replace('-', '').isdigit():
+        # Це числовий ID каналу (супергрупи)
+        pass
+    elif channel_identifier.startswith('+'):
+        # Це посилання на запрошення, яке не може бути використано як chat_id
+        logger.error(get_message('uk', 'news_channel_link_error', link=NEWS_CHANNEL_LINK))
+        return
+    elif not channel_identifier.startswith('@'):
+        # Додаємо '@' якщо це username каналу
+        channel_identifier = '@' + channel_identifier
     
     display_content = news_item.content
+    # Скорочуємо контент, якщо він занадто довгий
     if len(display_content) > 250:
         summary_prompt = f"Скороти цей текст до 250 символів, зберігаючи суть, українською мовою: {display_content}"
         ai_summary = await call_gemini_api(summary_prompt)
         if ai_summary:
             display_content = ai_summary
-            if len(display_content) > 247:
+            if len(display_content) > 247: # Додаткова перевірка після AI, щоб уникнути обрізання
                 display_content = display_content[:247] + "..."
         else:
-            display_content = display_content[:247] + "..."
+            display_content = display_content[:247] + "..." # Обрізаємо, якщо AI не спрацював
 
     text = (
         f"<b>Нова новина:</b> {news_item.title}\n\n"
@@ -1731,11 +1833,7 @@ async def send_news_to_channel(news_item: News):
     
     try:
         if news_item.image_url:
-            try:
-                await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
-            except Exception as photo_e:
-                logger.error(f"Failed to send photo for news {news_item.id} to channel {channel_identifier} from URL {news_item.image_url}: {photo_e}. Sending message without photo.", exc_info=True)
-                await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
+            await bot.send_photo(chat_id=channel_identifier, photo=str(news_item.image_url), caption=text, parse_mode=ParseMode.HTML)
         else:
             await bot.send_message(chat_id=channel_identifier, text=text, parse_mode=ParseMode.HTML)
         
@@ -1745,6 +1843,7 @@ async def send_news_to_channel(news_item: News):
         logger.error(get_message('uk', 'news_publish_error', title=news_item.title, identifier=channel_identifier, error=e), exc_info=True)
 
 async def fetch_and_post_news_task():
+    """Фонова задача: парсинг новин з джерел та публікація в канал."""
     logger.info("Running fetch_and_post_news_task.")
     pool = await get_db_pool()
     
@@ -1754,6 +1853,7 @@ async def fetch_and_post_news_task():
             sources = await cur.fetchall()
     
     for source in sources:
+        # Перевірка на наявність необхідних полів
         if not all([source.get('source_type'), source.get('source_url'), source.get('source_name')]):
             logger.warning(f"Skipping source due to missing data: {source}")
             continue
@@ -1763,12 +1863,7 @@ async def fetch_and_post_news_task():
             if source['source_type'] == 'rss':
                 news_data = await rss_parser.parse_rss_feed(source['source_url'])
             elif source['source_type'] == 'web':
-                logger.info(f"Парсинг веб-сайту: {source['source_url']}")
                 news_data = await web_parser.parse_website(source['source_url'])
-                if news_data:
-                    logger.info(f"Парсер веб-сайту {source['source_url']} знайшов новину: {news_data.get('title', 'Без заголовка')}")
-                else:
-                    logger.info(f"Парсер веб-сайту {source['source_url']} не знайшов нових новин.")
             elif source['source_type'] == 'telegram':
                 news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
             elif source['source_type'] == 'social_media':
@@ -1783,6 +1878,7 @@ async def fetch_and_post_news_task():
                 else:
                     logger.info(get_message('uk', 'news_not_added', name=source['source_name']))
                 
+                # Оновлення last_parsed для джерела
                 async with pool.connection() as conn_update:
                     async with conn_update.cursor() as cur_update:
                         await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
@@ -1793,6 +1889,7 @@ async def fetch_and_post_news_task():
         except Exception as e:
             logger.error(get_message('uk', 'source_parsing_error', name=source.get('source_name', 'N/A'), url=source.get('source_url', 'N/A'), error=e), exc_info=True)
     
+    # Публікація новин в канал
     news_to_post = await get_news_to_publish(limit=1)
     if news_to_post:
         news_item = news_to_post[0]
@@ -1801,6 +1898,7 @@ async def fetch_and_post_news_task():
         logger.info("No approved news to post to channel.")
 
 async def delete_expired_news_task():
+    """Фонова задача: видалення прострочених новин."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -1813,6 +1911,7 @@ async def delete_expired_news_task():
                 logger.info(get_message('uk', 'no_expired_news'))
 
 async def send_daily_digest():
+    """Фонова задача: надсилання щоденних дайджестів користувачам."""
     logger.info("Running send_daily_digest task.")
     pool = await get_db_pool()
     async with pool.connection() as conn:
@@ -1829,7 +1928,7 @@ async def send_daily_digest():
         user_telegram_id = user_data['telegram_id']
         user_lang = user_data['language']
         
-        news_items = await get_news_for_user(user_db_id, limit=5)
+        news_items = await get_news_for_user(user_db_id, limit=5) # Отримуємо до 5 непрочитаних новин
         if not news_items:
             logger.info(get_message('uk', 'daily_digest_no_news', user_id=user_telegram_id))
             continue
@@ -1838,7 +1937,7 @@ async def send_daily_digest():
         for i, news_item in enumerate(news_items):
             summary = await call_gemini_api(f"Зроби коротке резюме новини українською мовою: {news_item.content}", user_telegram_id=user_telegram_id)
             digest_text += get_message(user_lang, 'daily_digest_entry', idx=i+1, title=news_item.title, summary=summary, source_url=news_item.source_url)
-            await mark_news_as_viewed(user_db_id, news_item.id)
+            await mark_news_as_viewed(user_db_id, news_item.id) # Помічаємо новину як прочитану після включення в дайджест
         
         try:
             await bot.send_message(chat_id=user_telegram_id, text=digest_text, reply_markup=get_main_menu_keyboard(user_lang), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
@@ -1847,9 +1946,11 @@ async def send_daily_digest():
             logger.error(get_message('uk', 'daily_digest_send_error', user_id=user_telegram_id, error=e), exc_info=True)
 
 async def generate_invite_code() -> str:
+    """Генерує унікальний інвайт-код."""
     return ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=8))
 
 async def create_invite(inviter_user_db_id: int) -> Optional[str]:
+    """Створює новий інвайт-код для користувача."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -1863,27 +1964,29 @@ async def create_invite(inviter_user_db_id: int) -> Optional[str]:
                 return None
 
 async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: str, chat_id: int):
+    """Обробляє використання інвайт-коду новим користувачем."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
-        # Explicitly set row_factory for this cursor to ensure dictionary return
-        async with conn.cursor(row_factory=dict_row) as cur:
+        async with conn.cursor() as cur:
             await cur.execute("""SELECT id, inviter_user_id FROM invitations WHERE invite_code = %s AND status = 'pending' AND used_at IS NULL;""", (invite_code,))
             invite_record = await cur.fetchone()
             if invite_record:
-                invite_id = invite_record['id']
-                inviter_user_db_id = invite_record['inviter_user_id']
-                await cur.execute("UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;", (new_user_db_id, invite_id))
+                invite_id, inviter_user_db_id = invite_record
+                await cur.execute("""UPDATE invitations SET used_at = CURRENT_TIMESTAMP, status = 'accepted', invitee_telegram_id = %s WHERE id = %s;""", (new_user_db_id, invite_id))
                 
+                # Оновлення лічильників запрошень для запрошуючого користувача
                 await cur.execute("UPDATE users SET premium_invite_count = premium_invite_count + 1, digest_invite_count = digest_invite_count + 1 WHERE id = %s RETURNING premium_invite_count, digest_invite_count;", (inviter_user_db_id,))
                 inviter_updated_counts = await cur.fetchone()
 
                 if inviter_updated_counts:
+                    # Надання преміум-доступу
                     if inviter_updated_counts['premium_invite_count'] >= 5:
                         await update_user_premium_status(inviter_user_db_id, True)
                         inviter_telegram_user = await get_user_by_telegram_id(inviter_user_db_id)
                         if inviter_telegram_user:
                             await bot.send_message(chat_id=inviter_telegram_user.telegram_id, text=get_message(user_lang, 'premium_granted'))
                     
+                    # Надання безкоштовного дайджесту
                     if inviter_updated_counts['digest_invite_count'] >= 10:
                         await update_user_digest_frequency(inviter_user_db_id, 'daily')
                         inviter_telegram_user = await get_user_by_telegram_id(inviter_user_db_id)
@@ -1896,22 +1999,22 @@ async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: s
 
 @router.callback_query(F.data == "invite_friends")
 async def command_invite_handler(callback: CallbackQuery):
+    """Генерує та відправляє інвайт-код користувачеві."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     if not user:
-        user = await create_or_update_user(callback.from_user)
+        user = await create_or_update_user(callback.from_user) # Створюємо користувача, якщо його немає
     
     invite_code = await create_invite(user.id)
     if invite_code:
-        # Fix: Await bot.get_me() to get the bot's username
-        bot_info = await bot.get_me()
-        invite_link = f"https://t.me/{bot_info.username}?start={invite_code}"
+        invite_link = f"https://t.me/{bot.me.username}?start={invite_code}"
         await callback.message.edit_text(get_message(user_lang, 'your_invite_code', invite_code=invite_code, invite_link=hlink(get_message(user_lang, 'invite_link_label'), invite_link)), parse_mode=ParseMode.HTML, disable_web_page_preview=False, reply_markup=get_main_menu_keyboard(user_lang))
     else:
         await callback.message.edit_text(get_message(user_lang, 'invite_error'), reply_markup=get_main_menu_keyboard(user_lang))
     await callback.answer()
 
 async def update_source_stats_publication_count(source_id: int):
+    """Оновлює статистику публікацій для джерела."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -1920,6 +2023,7 @@ async def update_source_stats_publication_count(source_id: int):
 
 @router.callback_query(F.data == "ask_expert")
 async def handle_ask_expert(callback: CallbackQuery):
+    """Відображає меню вибору експерта AI."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ask_expert_prompt'), reply_markup=get_expert_selection_keyboard(user_lang))
@@ -1927,6 +2031,7 @@ async def handle_ask_expert(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ask_expert_"))
 async def handle_expert_selection(callback: CallbackQuery, state: FSMContext):
+    """Обробляє вибір експерта AI та запитує питання."""
     expert_type = callback.data.replace("ask_expert_", "")
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1938,6 +2043,7 @@ async def handle_expert_selection(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_expert_question)
 async def process_expert_question(message: Message, state: FSMContext):
+    """Обробляє питання до обраного експерта AI."""
     user_question = message.text
     user_data = await state.get_data()
     expert_type = user_data.get("expert_type")
@@ -1959,6 +2065,7 @@ async def process_expert_question(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "price_analysis_menu")
 async def handle_price_analysis_menu(callback: CallbackQuery):
+    """Відображає меню аналізу цін."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'price_analysis_prompt'), reply_markup=get_price_analysis_keyboard(user_lang))
@@ -1966,6 +2073,7 @@ async def handle_price_analysis_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "init_price_analysis")
 async def handle_init_price_analysis(callback: CallbackQuery, state: FSMContext):
+    """Ініціює процес аналізу цін, запитуючи опис товару та фото."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'price_analysis_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1974,6 +2082,7 @@ async def handle_init_price_analysis(callback: CallbackQuery, state: FSMContext)
 
 @router.message(AIAssistant.waiting_for_price_analysis_input)
 async def process_price_analysis_input(message: Message, state: FSMContext):
+    """Обробляє вхідні дані для аналізу цін (текст та фото)."""
     user_input = message.text
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1990,11 +2099,13 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
 
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
     
+    # Формуємо пошуковий запит
     search_query = f"ціна {user_input} купити Україна"
-    if image_data_base664:
+    if image_data_base64:
         search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
-    search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"])
+    # Виконуємо пошук за допомогою google_search
+    search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"]) # Додаємо англійський запит
     
     price_context = []
     for res_set in search_results:
@@ -2003,8 +2114,9 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
                 if res.snippet:
                     price_context.append(res.snippet)
     
-    context_text = "\n\n".join(price_context[:3])
+    context_text = "\n\n".join(price_context[:3]) # Використовуємо перші 3 сніпети
 
+    # Формуємо промпт для Gemini API
     prompt = f"Проаналізуй опис товару '{user_input}' та, якщо є, зображення. Використай наступну інформацію з пошуку: {context_text}. Розрахуй приблизну ціну в UAH, запропонуй можливі місця придбання та вкажи фактори, що впливають на ціну, та можливі аналоги. Будь максимально точним."
     price_analysis_result = await call_gemini_api(prompt, user_telegram_id=message.from_user.id, image_data=image_data_base64)
     
@@ -2013,6 +2125,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "help_sell")
 async def handle_help_sell(callback: CallbackQuery):
+    """Надає посилання на бота-помічника з продажу."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(
@@ -2024,6 +2137,7 @@ async def handle_help_sell(callback: CallbackQuery):
 
 @router.callback_query(F.data == "help_buy")
 async def handle_help_buy(callback: CallbackQuery):
+    """Надає посилання на канал з пропозиціями покупки."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(
@@ -2035,6 +2149,7 @@ async def handle_help_buy(callback: CallbackQuery):
 
 @router.callback_query(F.data == "ai_media_menu")
 async def handle_ai_media_menu(callback: CallbackQuery):
+    """Відображає головне меню AI медіа функцій."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_media_menu_prompt'), reply_markup=get_ai_media_menu_keyboard(user_lang))
@@ -2042,6 +2157,7 @@ async def handle_ai_media_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "generate_ai_news")
 async def handle_generate_ai_news(callback: CallbackQuery):
+    """Генерує AI новину на основі актуальних трендів."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2054,6 +2170,7 @@ async def handle_generate_ai_news(callback: CallbackQuery):
         "економічні тренди сьогодні",
         "climate change news latest"
     ]
+    # Виконуємо пошук за допомогою google_search
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
     context_news = []
@@ -2063,7 +2180,7 @@ async def handle_generate_ai_news(callback: CallbackQuery):
                 if res.snippet:
                     context_news.append(res.snippet)
     
-    context_text = "\n\n".join(context_news[:5])
+    context_text = "\n\n".join(context_news[:5]) # Використовуємо перші 5 сніпетів
     
     prompt = f"На основі наступних актуальних новин та трендів, згенеруй коротку, цікаву новину українською мовою. Новина має бути готова до публікації і не містити прямого посилання на джерела, а бути оригінальним текстом, що відображає тренди:\n\n{context_text}\n\nAI-новина:"
     ai_generated_content = await call_gemini_api(prompt, user_telegram_id=callback.from_user.id)
@@ -2075,11 +2192,11 @@ async def handle_generate_ai_news(callback: CallbackQuery):
     ai_news_data = {
         "title": title,
         "content": ai_generated_content,
-        "source_url": "https://ai.news.bot/generated/" + str(int(time.time())),
-        "image_url": "https://placehold.co/600x400/87CEEB/FFFFFF?text=AI+News",
+        "source_url": "https://ai.news.bot/generated/" + str(int(time.time())), # Унікальний URL для згенерованих новин
+        "image_url": "https://placehold.co/600x400/87CEEB/FFFFFF?text=AI+News", # Зображення-плейсхолдер
         "published_at": datetime.now(timezone.utc),
         "source_type": "ai_generated",
-        "user_id_for_source": None
+        "user_id_for_source": None # Це системна новина
     }
     added_news = await add_news_to_db(ai_news_data)
     if added_news:
@@ -2090,6 +2207,7 @@ async def handle_generate_ai_news(callback: CallbackQuery):
 
 @router.callback_query(F.data == "youtube_to_news")
 async def handle_youtube_to_news(callback: CallbackQuery, state: FSMContext):
+    """Запитує посилання на YouTube відео для перетворення на новину."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'youtube_url_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2098,6 +2216,7 @@ async def handle_youtube_to_news(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_youtube_url)
 async def process_youtube_url(message: Message, state: FSMContext):
+    """Обробляє URL YouTube відео та генерує новину."""
     youtube_url = message.text
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -2108,6 +2227,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
     
     await message.answer(get_message(user_lang, 'youtube_processing'))
     
+    # Виконуємо пошук для отримання інформації про відео (наприклад, транскрипт або резюме)
     search_query = f"YouTube video summary {youtube_url}"
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"YouTube {youtube_url} transcript summary"])
     
@@ -2118,13 +2238,14 @@ async def process_youtube_url(message: Message, state: FSMContext):
                 if res.snippet:
                     transcript_context.append(res.snippet)
     
-    context_text = "\n\n".join(transcript_context[:2])
+    context_text = "\n\n".join(transcript_context[:2]) # Використовуємо перші 2 сніпети
     
     prompt = f"На основі цієї інформації про YouTube відео, згенеруй новину українською мовою, включаючи заголовок, короткий зміст та аналітику. Інформація: {context_text}"
     ai_news_content = await call_gemini_api(prompt, user_telegram_id=message.from_user.id)
     
     title = ai_news_content.split('\n')[0] if ai_news_content and '\n' in ai_news_content else "YouTube Відео Новина"
     
+    # Спроба витягнути ID відео для зображення-мініатюри
     video_id = None
     if 'v=' in youtube_url:
         video_id = youtube_url.split('v=')[-1].split('&')[0]
@@ -2151,6 +2272,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "create_filtered_channel")
 async def handle_create_filtered_channel(callback: CallbackQuery, state: FSMContext):
+    """Запитує назву та теми для створення фільтрованого каналу."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'filtered_channel_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2159,18 +2281,20 @@ async def handle_create_filtered_channel(callback: CallbackQuery, state: FSMCont
 
 @router.message(AIAssistant.waiting_for_filtered_channel_details)
 async def process_filtered_channel_details(message: Message, state: FSMContext):
+    """Обробляє деталі для створення фільтрованого каналу (назва, теми)."""
     details = message.text.split(',')
     if len(details) < 2:
         await message.answer(get_message('uk', 'filtered_channel_prompt'))
         return
     
     channel_name = details[0].strip()
-    topics = [t.strip().lower() for t in details[1:] if t.strip()]
+    topics = [t.strip().lower() for t in details[1:] if t.strip()] # Фільтруємо пусті теми
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
     
     await message.answer(get_message(user_lang, 'filtered_channel_creating', channel_name=channel_name, topics=', '.join(topics)))
     
+    # Додаємо підписки на теми для користувача
     for topic in topics:
         await add_user_subscription(user.id, topic)
 
@@ -2179,6 +2303,7 @@ async def process_filtered_channel_details(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "create_ai_media")
 async def handle_create_ai_media(callback: CallbackQuery, state: FSMContext):
+    """Запитує назву для створення AI медіа."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_media_creating'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2187,12 +2312,14 @@ async def handle_create_ai_media(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_ai_media_name)
 async def process_ai_media_name(message: Message, state: FSMContext):
+    """Обробляє назву для створення AI медіа."""
     media_name = message.text.strip()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
     
     await message.answer(get_message(user_lang, 'ai_media_creating'))
     
+    # Це приклад "створення" AI медіа, оскільки реальна логіка може бути складною
     mock_media_description = f"Ваше AI-медіа '{media_name}' тепер генерує AI-тексти, публікує їх у власному каналі, надає аналітику та щоденні дайджести."
     
     await message.answer(get_message(user_lang, 'ai_media_created', media_name=media_name) + f"\n\n{mock_media_description}", reply_markup=get_ai_media_menu_keyboard(user_lang))
@@ -2200,6 +2327,7 @@ async def process_ai_media_name(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "analytics_menu")
 async def handle_analytics_menu(callback: CallbackQuery):
+    """Відображає меню аналітики."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'analytics_menu_prompt'), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -2207,6 +2335,7 @@ async def handle_analytics_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "infographics")
 async def handle_infographics(callback: CallbackQuery):
+    """Генерує опис інфографіки на основі актуальних даних."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2238,6 +2367,7 @@ async def handle_infographics(callback: CallbackQuery):
 
 @router.callback_query(F.data == "trust_index")
 async def handle_trust_index(callback: CallbackQuery):
+    """Розраховує та описує "Індекс довіри до джерел"."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2268,6 +2398,7 @@ async def handle_trust_index(callback: CallbackQuery):
 
 @router.callback_query(F.data == "long_term_connections")
 async def handle_long_term_connections(callback: CallbackQuery):
+    """Знаходить та описує довгострокові зв'язки між подіями."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2298,6 +2429,7 @@ async def handle_long_term_connections(callback: CallbackQuery):
 
 @router.callback_query(F.data == "ai_prediction")
 async def handle_ai_prediction(callback: CallbackQuery):
+    """Генерує AI прогноз "Що буде далі"."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2329,6 +2461,7 @@ async def handle_ai_prediction(callback: CallbackQuery):
 
 @router.callback_query(F.data == "donate")
 async def handle_donate_command(callback: CallbackQuery):
+    """Відправляє інформацію для донатів."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2341,6 +2474,7 @@ async def handle_donate_command(callback: CallbackQuery):
 
 @router.callback_query(F.data == "subscribe_menu")
 async def handle_subscribe_menu(callback: CallbackQuery):
+    """Відображає меню керування підписками."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -2357,6 +2491,7 @@ async def handle_subscribe_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "add_subscription")
 async def handle_add_subscription(callback: CallbackQuery, state: FSMContext):
+    """Запитує теми для додавання підписки."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'add_subscription_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2365,6 +2500,7 @@ async def handle_add_subscription(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SubscriptionStates.waiting_for_topics_to_add)
 async def process_topics_to_add(message: Message, state: FSMContext):
+    """Обробляє теми для додавання підписки."""
     topics_raw = message.text
     topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
     user = await get_user_by_telegram_id(message.from_user.id)
@@ -2378,6 +2514,7 @@ async def process_topics_to_add(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "remove_subscription")
 async def handle_remove_subscription(callback: CallbackQuery, state: FSMContext):
+    """Запитує тему для видалення підписки."""
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'remove_subscription_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2386,6 +2523,7 @@ async def handle_remove_subscription(callback: CallbackQuery, state: FSMContext)
 
 @router.message(SubscriptionStates.waiting_for_topic_to_remove)
 async def process_topic_to_remove(message: Message, state: FSMContext):
+    """Обробляє тему для видалення підписки."""
     topic_to_remove = message.text.strip().lower()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -2398,15 +2536,18 @@ async def process_topic_to_remove(message: Message, state: FSMContext):
         await message.answer(get_message(user_lang, 'subscription_not_found', topic=topic_to_remove), reply_markup=get_subscription_menu_keyboard(user_lang))
     await state.clear()
 
+# Планувальник завдань
 async def scheduler():
-    fetch_schedule_expression = '*/5 * * * *'
-    delete_schedule_expression = '0 */5 * * *'
-    daily_digest_schedule_expression = '0 9 * * *'
-    ai_news_generation_schedule = '0 */6 * * *'
+    """Запускає періодичні фонові завдання."""
+    fetch_schedule_expression = '*/5 * * * *'  # Кожні 5 хвилин
+    delete_schedule_expression = '0 */5 * * *'  # Кожні 5 годин
+    daily_digest_schedule_expression = '0 9 * * *' # Щодня о 9:00 UTC
+    ai_news_generation_schedule = '0 */6 * * *' # Кожні 6 годин
 
     while True:
         now = datetime.now(timezone.utc)
         
+        # Розрахунок часу до наступного запуску кожної задачі
         fetch_itr = croniter(fetch_schedule_expression, now)
         next_fetch_run = fetch_itr.get_next(datetime)
         fetch_delay_seconds = (next_fetch_run - now).total_seconds()
@@ -2423,6 +2564,7 @@ async def scheduler():
         next_ai_news_run = ai_news_itr.get_next(datetime)
         ai_news_delay_seconds = (next_ai_news_run - now).total_seconds()
 
+        # Визначаємо мінімальну затримку для наступного пробудження
         min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds, ai_news_delay_seconds)
         
         logger.info(f"Next fetch_and_post_news_task in {int(fetch_delay_seconds)}s.")
@@ -2431,9 +2573,10 @@ async def scheduler():
         logger.info(f"Next generate_ai_news_task in {int(ai_news_delay_seconds)}s.")
         logger.info(f"Bot sleeping for {int(min_delay)}s.")
 
-        await asyncio.sleep(max(1, int(min_delay)))
+        await asyncio.sleep(max(1, int(min_delay))) # Забезпечуємо мінімальну затримку в 1 секунду
 
         current_utc_time = datetime.now(timezone.utc)
+        # Запускаємо завдання, якщо настав їх час
         if (current_utc_time - next_fetch_run).total_seconds() >= -1:
             asyncio.create_task(fetch_and_post_news_task())
         if (current_utc_time - next_delete_run).total_seconds() >= -1:
@@ -2444,6 +2587,7 @@ async def scheduler():
             asyncio.create_task(generate_ai_news_task())
 
 async def generate_ai_news_task():
+    """Фонова задача для генерації AI новин (для системного використання)."""
     logger.info("Running generate_ai_news_task (scheduled).")
     search_queries = [
         "latest global news trends",
@@ -2464,7 +2608,7 @@ async def generate_ai_news_task():
     context_text = "\n\n".join(context_news[:5])
     
     prompt = f"На основі наступних актуальних новин та трендів, згенеруй коротку, цікаву новину українською мовою. Новина має бути готова до публікації і не містити прямого посилання на джерела, а бути оригінальним текстом, що відображає тренди:\n\n{context_text}\n\nAI-новина:"
-    ai_generated_content = await call_gemini_api(prompt)
+    ai_generated_content = await call_gemini_api(prompt) # Без user_telegram_id для системних запитів
 
     if ai_generated_content:
         title = ai_generated_content.split('.')[0] if ai_generated_content and '.' in ai_generated_content else "AI-generated News"
@@ -2488,8 +2632,10 @@ async def generate_ai_news_task():
     else:
         logger.warning("Failed to generate AI news content.")
 
+# FastAPI ендпоінти
 @app.on_event("startup")
 async def on_startup():
+    """Виконується при запуску FastAPI додатка."""
     webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
         render_external_url = os.getenv("RENDER_EXTERNAL_HOSTNAME")
@@ -2504,11 +2650,13 @@ async def on_startup():
     except Exception as e:
         logger.error(f"Error setting webhook: {e}", exc_info=True)
     
+    # Запускаємо планувальник як фонову задачу
     asyncio.create_task(scheduler())
     logger.info("FastAPI app started.")
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    """Виконується при завершенні роботи FastAPI додатка."""
     if db_pool:
         await db_pool.close()
         logger.info("DB pool closed.")
@@ -2517,6 +2665,7 @@ async def on_shutdown():
 
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
+    """Обробляє вхідні вебхуки від Telegram."""
     try:
         update = await request.json()
         aiogram_update = types.Update.model_validate(update, context={"bot": bot})
@@ -2527,6 +2676,7 @@ async def telegram_webhook(request: Request):
 
 @app.post("/")
 async def root_webhook(request: Request):
+    """Обробляє вебхуки на кореневому шляху (для деяких хостингів)."""
     try:
         update = await request.json()
         aiogram_update = types.Update.model_validate(update, context={"bot": bot})
@@ -2537,24 +2687,30 @@ async def root_webhook(request: Request):
 
 @app.get("/healthz", response_class=PlainTextResponse)
 async def healthz():
+    """Ендпоінт для перевірки стану здоров'я додатка."""
     return "OK"
 
 @app.get("/ping", response_class=PlainTextResponse)
 async def ping():
+    """Простий ендпоінт для перевірки доступності."""
     return "pong"
 
+# Адмінські ендпоінти
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
+    """Повертає головну HTML сторінку."""
     with open("index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def read_dashboard(api_key: str = Depends(get_api_key)):
+    """Повертає HTML сторінку дашборду адміністратора."""
     with open("dashboard.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/users", response_class=HTMLResponse)
 async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    """Отримує список користувачів для адмін-панелі."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2563,6 +2719,7 @@ async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offse
 
 @app.get("/reports", response_class=HTMLResponse)
 async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    """Отримує список репортів для адмін-панелі."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2572,6 +2729,7 @@ async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, off
 
 @app.get("/api/admin/sources")
 async def get_admin_sources(api_key: str = Depends(get_api_key), limit: int = 100, offset: int = 0):
+    """Отримує список джерел для адмін-панелі."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2580,6 +2738,7 @@ async def get_admin_sources(api_key: str = Depends(get_api_key), limit: int = 10
 
 @app.get("/api/admin/stats")
 async def get_admin_stats(api_key: str = Depends(get_api_key)):
+    """Отримує статистику додатка для адмін-панелі."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2593,6 +2752,7 @@ async def get_admin_stats(api_key: str = Depends(get_api_key)):
 
 @app.get("/api/admin/news")
 async def get_admin_news(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0, status: Optional[str] = None):
+    """Отримує список новин для адмін-панелі з можливістю фільтрації за статусом."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2608,6 +2768,7 @@ async def get_admin_news(api_key: str = Depends(get_api_key), limit: int = 10, o
 
 @app.get("/api/admin/news/counts_by_status")
 async def get_news_counts_by_status(api_key: str = Depends(get_api_key)):
+    """Отримує кількість новин за статусом модерації."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2616,6 +2777,7 @@ async def get_news_counts_by_status(api_key: str = Depends(get_api_key)):
 
 @app.put("/api/admin/news/{news_id}")
 async def update_admin_news(news_id: int, news: News, api_key: str = Depends(get_api_key)):
+    """Оновлює новину через адмін-панель."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2628,6 +2790,7 @@ async def update_admin_news(news_id: int, news: News, api_key: str = Depends(get
 
 @app.delete("/api/admin/news/{news_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key)):
+    """Видаляє новину через адмін-панель."""
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2636,11 +2799,15 @@ async def delete_admin_news_api(news_id: int, api_key: str = Depends(get_api_key
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="News not found.")
             return
 
+# Точка входу для запуску додатка
 if __name__ == "__main__":
     import uvicorn
+    # Якщо WEBHOOK_URL не встановлено, запускаємо бота в режимі поллінгу
     if not os.getenv("WEBHOOK_URL"):
         logger.info("WEBHOOK_URL not set. Running bot in polling mode.")
         async def start_polling():
             await dp.start_polling(bot)
         asyncio.run(start_polling())
+    # Запускаємо FastAPI додаток
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
