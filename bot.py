@@ -34,99 +34,114 @@ from gtts import gTTS
 from croniter import croniter
 
 import web_parser
-import telegram_parser
-import rss_parser
-import social_media_parser
+import rss_parser # Added rss_parser import
 
-from src.parsers import rss_parser, web_parser
 from database import get_db_pool
 from datetime import datetime, timezone
 from aiogram.utils.markdown import hlink
 
-setup_scheduler(bot)
-
-
-
-async def fetch_and_post_news_task(bot):
-    pool = await get_db_pool()
-
-    async with pool.acquire() as conn:
-        sources = await conn.fetch("SELECT * FROM sources WHERE is_active = TRUE")
-
-        for source in sources:
-            source_id = source['id']
-            source_url = source['url']
-            source_type = source['source_type']
-
-            try:
-                if source_type == 'rss':
-                    news_list = await rss_parser.parse_rss_feed(source_url)
-                elif source_type == 'web':
-                    parsed_article = await web_parser.parse_website(source_url)
-                    news_list = [parsed_article] if parsed_article else []
-                else:
-                    print(f"[!] Невідомий тип джерела: {source_type}")
-                    continue
-
-                for news in news_list:
-                    if not news:
-                        continue
-
-                    source_link = news.get('source_url')
-                    # Перевірка на дублі
-                    existing = await conn.fetchval(
-                        "SELECT 1 FROM news WHERE source_url = $1",
-                        source_link
-                    )
-                    if existing:
-                        continue  # дубль
-
-                    await conn.execute(
-                        """
-                        INSERT INTO news (title, content, image_url, source_url, published_at, source_id, lang)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        """,
-                        news['title'],
-                        news['content'],
-                        news['image_url'],
-                        news['source_url'],
-                        news['published_at'],
-                        source_id,
-                        news.get('lang', 'uk')
-                    )
-
-                    # Автоматично надіслати користувачам (опціонально)
-                    # отримати список користувачів
-                    users = await conn.fetch("SELECT user_id FROM users WHERE is_premium = TRUE")
-
-                    for user in users:
-                        try:
-                            caption = f"📰 <b>{news['title']}</b>\n\n"
-                            caption += f"{news['content'][:500]}...\n\n"
-                            caption += f"{hlink('🔗 Читати повністю', news['source_url'])}"
-
-                            if news.get('image_url'):
-                                await bot.send_photo(user['user_id'], photo=news['image_url'], caption=caption, parse_mode="HTML")
-                            else:
-                                await bot.send_message(user['user_id'], caption, parse_mode="HTML")
-
-                        except Exception as e:
-                            print(f"[!] Не вдалося надіслати новину користувачу {user['user_id']}: {e}")
-
-            except Exception as e:
-                print(f"[!] Помилка при обробці джерела {source_url}: {e}")
-
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from tasks.fetch_news import fetch_and_post_news_task
 
+# Initialize scheduler globally
 scheduler = AsyncIOScheduler()
 
 def setup_scheduler(bot):
-    scheduler.add_job(fetch_and_post_news_task, 'interval', hours=24, args=[bot])
+    # Sets up scheduled tasks for the bot.
+    scheduler.add_job(fetch_and_post_news_task, 'interval', hours=24, args=[bot], id='daily_news_fetch')
+    scheduler.add_job(delete_expired_news_task, 'interval', hours=5, id='delete_expired_news')
+    scheduler.add_job(send_daily_digest, 'cron', hour=9, minute=0, id='send_daily_digest') # Every day at 9 AM UTC
     scheduler.start()
 
 
+async def fetch_and_post_news_task(bot):
+    # Fetches news from active sources and posts them.
+    # This function is designed to be run as a scheduled task or manually.
+    logger.info("Running fetch_and_post_news_task.")
+    pool = await get_db_pool()
+
+    async with pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT * FROM sources WHERE status = 'active'")
+            sources = await cur.fetchall()
+    
+    if not sources:
+        logger.info("No active sources found to parse.")
+        return
+
+    for source in sources:
+        logger.info(f"Processing source: {source['source_name']} ({source['source_url']})")
+        if not all([source.get('source_type'), source.get('source_url'), source.get('source_name')]):
+            logger.warning(f"Skipping source due to missing data: {source}")
+            continue
+
+        news_items_from_source = []
+        try:
+            if source['source_type'] == 'rss':
+                logger.info(f"Attempting to parse RSS feed: {source['source_url']}")
+                try:
+                    news_list = await rss_parser.parse_rss_feed(source['source_url'])
+                    news_items_from_source.extend(news_list)
+                    if not news_list:
+                        logger.info(f"RSS parser for {source['source_url']} found no new news. Attempting web parser as fallback.")
+                        parsed_article = await web_parser.parse_website(source['source_url'])
+                        if parsed_article:
+                            news_items_from_source.append(parsed_article)
+                            logger.info(f"Web parser fallback for {source['source_url']} found news: {parsed_article.get('title', 'No Title')}")
+                        else:
+                            logger.info(f"Web parser fallback for {source['source_url']} found no new news.")
+                    else:
+                        logger.info(f"RSS parser for {source['source_url']} found {len(news_list)} news items.")
+                except Exception as rss_e:
+                    logger.error(f"Error parsing RSS feed {source['source_url']}: {rss_e}. Attempting web parser as fallback.", exc_info=True)
+                    parsed_article = await web_parser.parse_website(source['source_url'])
+                    if parsed_article:
+                        news_items_from_source.append(parsed_article)
+                        logger.info(f"Web parser fallback for {source['source_url']} found news: {parsed_article.get('title', 'No Title')}")
+                    else:
+                        logger.info(f"Web parser fallback for {source['source_url']} found no new news.")
+            elif source['source_type'] == 'web':
+                logger.info(f"Attempting to parse website: {source['source_url']}")
+                parsed_article = await web_parser.parse_website(source['source_url'])
+                if parsed_article:
+                    news_items_from_source.append(parsed_article)
+                    logger.info(f"Web parser for {source['source_url']} found news: {parsed_article.get('title', 'No Title')}")
+                else:
+                    logger.info(f"Web parser for {source['source_url']} found no new news.")
+            else:
+                logger.info(f"Skipping unsupported source type: {source['source_type']} for source {source['source_name']}")
+                continue # Skip if source type is not supported
+
+            added_any_news = False
+            for news_data in news_items_from_source:
+                if news_data:
+                    # Set user_id_for_source to None for automatically parsed news so they go to 'pending' moderation
+                    news_data.update({'source_id': source['id'], 'source_name': source['source_name'], 'source_type': source['source_type'], 'user_id_for_source': None})
+                    added_news_item = await add_news_to_db(news_data)
+                    if added_news_item:
+                        await update_source_stats_publication_count(source['id'])
+                        logger.info(get_message('uk', 'news_added_success', title=added_news_item.title))
+                        added_any_news = True
+                    else:
+                        logger.info(get_message('uk', 'news_not_added', name=source['source_name']))
+            
+            if added_any_news:
+                async with pool.connection() as conn_update:
+                    async with conn_update.cursor() as cur_update:
+                        await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
+                        await conn_update.commit()
+                logger.info(get_message('uk', 'source_last_parsed_updated', name=source['source_name']))
+            else:
+                logger.info(f"No new news added for source {source['source_name']} ({source['source_url']}).")
+
+        except Exception as e:
+            logger.error(get_message('uk', 'source_parsing_error', name=source.get('source_name', 'N/A'), url=source.get('source_url', 'N/A'), error=e), exc_info=True)
+    
+    news_to_post = await get_news_to_publish(limit=1)
+    if news_to_post:
+        news_item = news_to_post[0]
+        await send_news_to_channel(news_item)
+    else:
+        logger.info("No approved news to post to channel.")
 
 
 load_dotenv()
@@ -169,6 +184,7 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 async def get_api_key(api_key: str = Depends(api_key_header)):
+    # Dependency to validate the admin API key.
     if not ADMIN_API_KEY:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="ADMIN_API_KEY not configured.")
     if api_key is None or api_key != ADMIN_API_KEY:
@@ -183,8 +199,12 @@ dp.include_router(router)
 db_pool: Optional[AsyncConnectionPool] = None
 
 async def get_db_pool():
+    # Initializes and returns a database connection pool.
     global db_pool
     if db_pool is None:
+        if not DATABASE_URL:
+            logger.error("DATABASE_URL environment variable is not set.")
+            raise ValueError("DATABASE_URL environment variable is not set.")
         try:
             db_pool = AsyncConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, open=psycopg.AsyncConnection.connect)
             async with db_pool.connection() as conn:
@@ -198,11 +218,13 @@ async def get_db_pool():
 from pydantic import BaseModel, HttpUrl
 
 class News(BaseModel):
+    # Pydantic model for a news item.
     id: Optional[int] = None
     source_id: Optional[int] = None
     title: str
     content: str
     source_url: HttpUrl
+    normalized_source_url: str # Added to Pydantic model
     image_url: Optional[HttpUrl] = None
     published_at: datetime
     moderation_status: str = 'pending'
@@ -211,6 +233,7 @@ class News(BaseModel):
     ai_classified_topics: Optional[List[str]] = None # Added this back for filtering
 
 class User(BaseModel):
+    # Pydantic model for a user.
     id: Optional[int] = None
     telegram_id: int
     username: Optional[str] = None
@@ -237,10 +260,12 @@ class User(BaseModel):
     ai_last_request_date: Optional[datetime] = None
 
 class Source(BaseModel):
+    # Pydantic model for a news source.
     id: Optional[int] = None
     user_id: Optional[int] = None
     source_name: str
     source_url: HttpUrl
+    normalized_source_url: str # Added to Pydantic model
     source_type: str
     status: str = 'active'
     added_at: Optional[datetime] = None
@@ -475,15 +500,19 @@ MESSAGES = {
         'unknown_source': "Unknown Source",
         'bookmark_add_btn': "⭐️ Bookmark",
         'action_done': "Action done.",
+        'parse_now_started': "Запускаю парсинг усіх джерел. Це може зайняти деякий час.",
+        'parse_now_completed': "Парсинг джерел завершено."
     }
 }
 
 def get_message(user_lang: str, key: str, **kwargs) -> str:
-    # Fallback to 'uk' if user_lang is not found, then to an empty string if key is missing
+    # Retrieves a localized message based on the user's language and message key.
+    # Falls back to Ukrainian if the user's language is not found.
     return MESSAGES.get(user_lang, MESSAGES['uk']).get(key, "").format(**kwargs)
 
 def normalize_url(url: str) -> str:
-    """Normalizes a URL to ensure consistent comparison."""
+    # Normalizes a URL to ensure consistent comparison by removing trailing slashes
+    # and sorting query parameters.
     parsed = urlparse(url)
     # Remove trailing slashes from path
     path = parsed.path.rstrip('/')
@@ -495,6 +524,7 @@ def normalize_url(url: str) -> str:
     return normalized_url
 
 async def create_or_update_user(user_data: types.User) -> User:
+    # Creates a new user record or updates an existing one in the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -517,6 +547,7 @@ async def create_or_update_user(user_data: types.User) -> User:
             return User(**await cur.fetchone())
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
+    # Retrieves a user record from the database by their Telegram ID.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -525,6 +556,7 @@ async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
             return User(**user_record) if user_record else None
 
 async def update_user_premium_status(user_id: int, is_premium: bool):
+    # Updates a user's premium status in the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -532,6 +564,7 @@ async def update_user_premium_status(user_id: int, is_premium: bool):
             await conn.commit()
 
 async def update_user_digest_frequency(user_id: int, frequency: str):
+    # Updates a user's digest frequency in the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -539,6 +572,7 @@ async def update_user_digest_frequency(user_id: int, frequency: str):
             await conn.commit()
 
 async def update_user_ai_request_count(user_id: int, count: int, last_request_date: datetime):
+    # Updates a user's AI request count and last request date in the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -546,6 +580,7 @@ async def update_user_ai_request_count(user_id: int, count: int, last_request_da
             await conn.commit()
 
 async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
+    # Adds a new news item to the database, or updates an existing source.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -600,6 +635,7 @@ async def add_news_to_db(news_data: Dict[str, Any]) -> Optional[News]:
             return News(**await cur.fetchone())
 
 async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topics: Optional[List[str]] = None, start_datetime: Optional[datetime] = None) -> List[News]:
+    # Retrieves news items for a specific user, filtering by viewed status, moderation, and topics.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -628,6 +664,7 @@ async def get_news_for_user(user_id: int, limit: int = 10, offset: int = 0, topi
             return [News(**record) for record in await cur.fetchall()]
 
 async def get_news_to_publish(limit: int = 1) -> List[News]:
+    # Retrieves news items that are approved and not yet published to the channel.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -635,6 +672,7 @@ async def get_news_to_publish(limit: int = 1) -> List[News]:
             return [News(**record) for record in await cur.fetchall()]
 
 async def mark_news_as_published_to_channel(news_id: int):
+    # Marks a news item as published to the channel.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -643,6 +681,7 @@ async def mark_news_as_published_to_channel(news_id: int):
             logger.info(f"News {news_id} marked as published to channel.")
 
 async def count_unseen_news(user_id: int) -> int:
+    # Counts the number of unseen news items for a specific user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -650,6 +689,7 @@ async def count_unseen_news(user_id: int) -> int:
             return (await cur.fetchone())['count']
 
 async def mark_news_as_viewed(user_id: int, news_id: int):
+    # Marks a news item as viewed by a user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -657,6 +697,7 @@ async def mark_news_as_viewed(user_id: int, news_id: int):
             await conn.commit()
 
 async def get_news_by_id(news_id: int) -> Optional[News]:
+    # Retrieves a news item by its ID.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -665,6 +706,7 @@ async def get_news_by_id(news_id: int) -> Optional[News]:
             return News(**news_record) if news_record else None
 
 async def get_source_by_id(source_id: int):
+    # Retrieves a source by its ID.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -672,13 +714,15 @@ async def get_source_by_id(source_id: int):
             return await cur.fetchone()
 
 async def get_sources_by_user_id(user_id: int) -> List[Source]:
+    # Retrieves all sources added by a specific user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT id, user_id, source_name, source_url, source_type, status, added_at FROM sources WHERE user_id = %s ORDER BY added_at DESC;", (user_id,))
+            await cur.execute("SELECT id, user_id, source_name, source_url, normalized_source_url, source_type, status, added_at FROM sources WHERE user_id = %s ORDER BY added_at DESC;", (user_id,))
             return [Source(**record) for record in await cur.fetchall()]
 
 async def delete_source_by_id(source_id: int, user_id: int) -> bool:
+    # Deletes a source by its ID and user ID.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -687,6 +731,7 @@ async def delete_source_by_id(source_id: int, user_id: int) -> bool:
             return cur.rowcount > 0
 
 async def add_user_news_reaction(user_id: int, news_id: int, reaction_type: str):
+    # Adds or updates a user's reaction to a news item.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -697,6 +742,7 @@ async def add_user_news_reaction(user_id: int, news_id: int, reaction_type: str)
             await conn.commit()
 
 async def get_user_subscriptions(user_id: int) -> List[str]:
+    # Retrieves all topic subscriptions for a given user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -704,6 +750,7 @@ async def get_user_subscriptions(user_id: int) -> List[str]:
             return [row['topic'] for row in await cur.fetchall()]
 
 async def add_user_subscription(user_id: int, topic: str):
+    # Adds a new topic subscription for a user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -711,6 +758,7 @@ async def add_user_subscription(user_id: int, topic: str):
             await conn.commit()
 
 async def remove_user_subscription(user_id: int, topic: str):
+    # Removes a topic subscription for a user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -718,15 +766,18 @@ async def remove_user_subscription(user_id: int, topic: str):
             await conn.commit()
 
 class AddSourceStates(StatesGroup):
+    # States for adding a new source.
     waiting_for_url = State()
 
 class NewsBrowse(StatesGroup):
+    # States for browsing news.
     Browse_news = State()
     news_index = State()
     news_ids = State()
     last_message_id = State()
 
 class AIAssistant(StatesGroup):
+    # States for AI assistant functionalities.
     waiting_for_question = State()
     waiting_for_news_id_for_ai = State()
     waiting_for_term_to_explain = State()
@@ -740,13 +791,16 @@ class AIAssistant(StatesGroup):
     waiting_for_ai_media_name = State()
 
 class ModerationStates(StatesGroup):
+    # States for news moderation.
     browsing_pending_news = State()
 
 class SubscriptionStates(StatesGroup):
+    # States for managing user subscriptions.
     waiting_for_topics_to_add = State()
     waiting_for_topic_to_remove = State()
 
 def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the main menu keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_btn'), callback_data="help_menu"), InlineKeyboardButton(text=get_message(user_lang, 'language_btn'), callback_data="language_menu"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_buy_btn'), callback_data="help_buy"), InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
@@ -757,6 +811,7 @@ def get_main_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the news reaction keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text=get_message(user_lang, 'reaction_interesting'), callback_data=f"react_news_interesting_{news_id}"),
@@ -766,6 +821,7 @@ def get_news_reactions_keyboard(news_id: int, user_lang: str) -> InlineKeyboardM
     return builder.as_markup()
 
 def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) -> InlineKeyboardMarkup:
+    # Generates the AI news functions keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'translate_btn'), callback_data=f"translate_select_lang_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'listen_news_btn'), callback_data=f"listen_news_{news_id}"))
@@ -777,6 +833,7 @@ def get_ai_news_functions_keyboard(news_id: int, user_lang: str, page: int = 0) 
     return builder.as_markup()
 
 def get_translate_language_keyboard(news_id: int, user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the language selection keyboard for translation.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'english_lang'), callback_data=f"translate_to_en_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'ukrainian_lang'), callback_data=f"translate_to_uk_{news_id}"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'polish_lang'), callback_data=f"translate_to_pl_{news_id}"), InlineKeyboardButton(text=get_message(user_lang, 'german_lang'), callback_data=f"translate_to_de_{news_id}"))
@@ -785,6 +842,7 @@ def get_translate_language_keyboard(news_id: int, user_lang: str) -> InlineKeybo
     return builder.as_markup()
 
 def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the expert selection keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'expert_portnikov_btn'), callback_data="ask_expert_portnikov"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'expert_libsits_btn'), callback_data="ask_expert_libsits"))
@@ -792,6 +850,7 @@ def get_expert_selection_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the AI media menu keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="price_analysis_menu"), InlineKeyboardButton(text=get_message(user_lang, 'ask_expert'), callback_data="ask_expert"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'youtube_to_news_btn'), callback_data="youtube_to_news"), InlineKeyboardButton(text=get_message(user_lang, 'create_filtered_channel_btn'), callback_data="create_filtered_channel"))
@@ -800,6 +859,7 @@ def get_ai_media_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the analytics menu keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'infographics_btn'), callback_data="infographics"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'trust_index_btn'), callback_data="trust_index"))
@@ -809,6 +869,7 @@ def get_analytics_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_price_analysis_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the price analysis keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'price_analysis_prompt'), callback_data="init_price_analysis"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'help_sell_btn'), callback_data="help_sell"))
@@ -817,6 +878,7 @@ def get_price_analysis_keyboard(user_lang: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_subscription_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
+    # Generates the subscription menu keyboard.
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'add_subscription_btn'), callback_data="add_subscription"))
     builder.row(InlineKeyboardButton(text=get_message(user_lang, 'remove_subscription_btn'), callback_data="remove_subscription"))
@@ -825,6 +887,7 @@ def get_subscription_menu_keyboard(user_lang: str) -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext):
+    # Handles the /start command, creates/updates user, and shows welcome message/onboarding.
     await state.clear()
     user = await create_or_update_user(message.from_user)
     user_lang = user.language if user else 'uk'
@@ -864,6 +927,7 @@ async def command_start_handler(message: Message, state: FSMContext):
 
 @router.message(Command("menu"))
 async def command_menu_handler(message: Message, state: FSMContext):
+    # Handles the /menu command, clearing current state and showing the main menu.
     await state.clear()
     user = await create_or_update_user(message.from_user)
     user_lang = user.language if user else 'uk'
@@ -871,6 +935,7 @@ async def command_menu_handler(message: Message, state: FSMContext):
 
 @router.message(Command("cancel"))
 async def command_cancel_handler(message: Message, state: FSMContext):
+    # Handles the /cancel command, clearing current state and returning to the main menu.
     await state.clear()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -878,6 +943,7 @@ async def command_cancel_handler(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
+    # Handles callback for returning to the main menu.
     await state.clear()
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -886,6 +952,7 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "help_menu")
 async def callback_help_menu(callback: CallbackQuery, state: FSMContext):
+    # Handles callback for displaying help information.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'help_text'), parse_mode=ParseMode.HTML, reply_markup=get_main_menu_keyboard(user_lang))
@@ -893,6 +960,7 @@ async def callback_help_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "add_source")
 async def callback_add_source(callback: CallbackQuery, state: FSMContext):
+    # Handles callback for initiating the add source process.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'add_source_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -901,6 +969,7 @@ async def callback_add_source(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddSourceStates.waiting_for_url)
 async def process_source_url(message: Message, state: FSMContext):
+    # Processes the URL provided by the user for adding a new source.
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
     source_url = message.text
@@ -916,7 +985,7 @@ async def process_source_url(message: Message, state: FSMContext):
                 source_name = parsed_url.host if parsed_url.host else get_message(user_lang, 'unknown_source')
                 await cur.execute(
                     """INSERT INTO sources (user_id, source_name, source_url, normalized_source_url, source_type, added_at, last_parsed) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (normalized_source_url) DO UPDATE SET source_name = EXCLUDED.source_name, source_type = EXCLUDED.source_type, status = 'active', last_parsed = CURRENT_TIMESTAMP RETURNING id;""",
-                    (user.id, source_name, source_url, normalized_url, 'web')
+                    (user.id, source_name, source_url, normalized_url, 'web') # Default to 'web' type for user-added sources
                 )
                 await conn.commit()
         await message.answer(get_message(user_lang, 'source_added_success', source_url=source_url), reply_markup=get_main_menu_keyboard(user_lang))
@@ -927,6 +996,7 @@ async def process_source_url(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "my_sources")
 async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
+    # Handles the 'my_sources' callback, displaying a list of user's added sources.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     sources = await get_sources_by_user_id(user.id)
@@ -948,6 +1018,7 @@ async def handle_my_sources_command(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text.startswith("/source_delete_"))
 async def handle_delete_source_command(message: Message):
+    # Handles the command to delete a specific source.
     try:
         source_id = int(message.text.split('_')[-1])
         user = await get_user_by_telegram_id(message.from_user.id)
@@ -969,6 +1040,7 @@ async def handle_delete_source_command(message: Message):
 
 @router.callback_query(F.data == "my_news")
 async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
+    # Handles the 'my_news' callback, fetching and displaying news for the user.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_subscriptions = await get_user_subscriptions(user.id)
@@ -996,6 +1068,7 @@ async def handle_my_news_command(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(NewsBrowse.Browse_news, F.data == "next_news")
 async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
+    # Handles the 'next_news' callback, displaying the next news item.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_data = await state.get_data()
@@ -1020,6 +1093,7 @@ async def handle_next_news_command(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(NewsBrowse.Browse_news, F.data == "prev_news")
 async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
+    # Handles the 'prev_news' callback, displaying the previous news item.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     user_data = await state.get_data()
@@ -1043,6 +1117,7 @@ async def handle_prev_news_command(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 async def send_news_to_user(chat_id: int, news_id: int, current_index: int, total_news: int, state: FSMContext):
+    # Sends a news item to the user's chat.
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(chat_id)
     user_lang = user.language if user else 'uk'
@@ -1098,6 +1173,8 @@ async def send_news_to_user(chat_id: int, news_id: int, current_index: int, tota
 
 
 async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, chat_history: Optional[List[Dict]] = None, image_data: Optional[str] = None) -> Optional[str]:
+    # Calls the Gemini API to generate text or analyze images.
+    # Includes rate limiting for non-premium users.
     if not GEMINI_API_KEY:
         return "AI is not available. Please configure GEMINI_API_KEY."
 
@@ -1147,11 +1224,13 @@ async def call_gemini_api(prompt: str, user_telegram_id: Optional[int] = None, c
         return "An error occurred with AI. Please try again later."
 
 async def check_premium_access(user_telegram_id: int) -> bool:
+    # Checks if a user has premium or pro access.
     user = await get_user_by_telegram_id(user_telegram_id)
     return user and (user.is_premium or user.is_pro)
 
 @router.callback_query(F.data.startswith("ai_news_functions_menu_"))
 async def handle_ai_news_functions_menu(callback: CallbackQuery):
+    # Displays the AI news functions menu for a specific news item.
     parts = callback.data.split('_')
     news_id = int(parts[-1])
     page = int(parts[-2]) if len(parts) > 4 else 0 # This page parameter is now mostly vestigial
@@ -1164,6 +1243,7 @@ async def handle_ai_news_functions_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("translate_select_lang_"))
 async def handle_translate_select_language(callback: CallbackQuery, state: FSMContext):
+    # Handles the selection of a language for news translation.
     news_id = int(callback.data.split('_')[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1174,6 +1254,7 @@ async def handle_translate_select_language(callback: CallbackQuery, state: FSMCo
 
 @router.callback_query(AIAssistant.waiting_for_translate_language, F.data.startswith("translate_to_"))
 async def handle_translate_to_language(callback: CallbackQuery, state: FSMContext):
+    # Handles the translation of a news item to the selected language.
     parts = callback.data.split('_')
     lang_code = parts[2]
     news_id = int(parts[3])
@@ -1197,6 +1278,7 @@ async def handle_translate_to_language(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(F.data.startswith("listen_news_"))
 async def handle_listen_news(callback: CallbackQuery):
+    # Generates and sends an audio version of a news item.
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1223,6 +1305,8 @@ async def handle_listen_news(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("extract_entities_"))
 async def handle_extract_entities(callback: CallbackQuery):
+    # Extracts key entities from a news item using AI.
+    # Requires premium access.
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1243,6 +1327,8 @@ async def handle_extract_entities(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("explain_term_"))
 async def handle_explain_term(callback: CallbackQuery, state: FSMContext):
+    # Prompts the user to provide a term to explain within the context of a news item.
+    # Requires premium access.
     news_id = int(callback.data.split('_')[2])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1262,6 +1348,7 @@ async def handle_explain_term(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_term_to_explain)
 async def process_term_explanation(message: Message, state: FSMContext):
+    # Processes the term provided by the user and generates an explanation using AI.
     term = message.text
     user_data = await state.get_data()
     news_id = user_data.get("waiting_for_news_id_for_ai")
@@ -1287,6 +1374,8 @@ async def process_term_explanation(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("fact_check_news_"))
 async def handle_fact_check_news(callback: CallbackQuery):
+    # Performs a fact-check on a news item using AI.
+    # Requires premium access.
     news_id = int(callback.data.split('_')[3])
     news_item = await get_news_by_id(news_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -1307,6 +1396,7 @@ async def handle_fact_check_news(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("bookmark_news_"))
 async def handle_bookmark_news(callback: CallbackQuery, state: FSMContext):
+    # Handles adding or removing a news item from user bookmarks.
     parts = callback.data.split('_')
     action = parts[2]
     news_id = int(parts[3])
@@ -1355,6 +1445,7 @@ async def handle_bookmark_news(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("report_fake_news_"))
 async def handle_report_fake_news(callback: CallbackQuery):
+    # Handles reporting a news item as fake news.
     news_id = int(callback.data.split('_')[3])
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1378,6 +1469,8 @@ async def handle_report_fake_news(callback: CallbackQuery):
     await callback.message.edit_text(get_message(user_lang, 'report_action_done'), reply_markup=get_ai_news_functions_keyboard(news_id, user_lang))
 
 async def send_news_to_channel(news_item: News):
+    # Sends a news item to the configured Telegram channel.
+    # Summarizes content if too long.
     if not NEWS_CHANNEL_LINK:
         logger.warning("NEWS_CHANNEL_LINK is not configured. Skipping channel post.")
         return
@@ -1418,75 +1511,8 @@ async def send_news_to_channel(news_item: News):
     except Exception as e:
         logger.error(get_message('uk', 'news_publish_error', title=news_item.title, identifier=channel_identifier, error=e), exc_info=True)
 
-async def fetch_and_post_news_task():
-    logger.info("Running fetch_and_post_news_task.")
-    pool = await get_db_pool()
-    
-    async with pool.connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT * FROM sources WHERE status = 'active'")
-            sources = await cur.fetchall()
-    
-    for source in sources:
-        logger.info(f"Processing source: {source['source_name']} ({source['source_url']})")
-        if not all([source.get('source_type'), source.get('source_url'), source.get('source_name')]):
-            logger.warning(f"Skipping source due to missing data: {source}")
-            continue
-
-        news_data = None
-        try:
-            if source['source_type'] == 'rss':
-                news_data = await rss_parser.parse_rss_feed(source['source_url'])
-            elif source['source_type'] == 'web':
-                logger.info(f"Attempting to parse website: {source['source_url']}")
-                news_data = await web_parser.parse_website(source['source_url'])
-                if news_data:
-                    logger.info(f"Web parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
-                else:
-                    logger.info(f"Web parser for {source['source_url']} found no new news.")
-            elif source['source_type'] == 'telegram':
-                logger.info(f"Attempting to parse Telegram: {source['source_url']}")
-                news_data = await telegram_parser.get_telegram_channel_posts(source['source_url'])
-                if news_data:
-                    logger.info(f"Telegram parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
-                else:
-                    logger.info(f"Telegram parser for {source['source_url']} found no new news.")
-            elif source['source_type'] == 'social_media':
-                logger.info(f"Attempting to parse Social Media: {source['source_url']}")
-                news_data = await social_media_parser.get_social_media_posts(source['source_url'], "general")
-                if news_data:
-                    logger.info(f"Social Media parser for {source['source_url']} found news: {news_data.get('title', 'No Title')}")
-                else:
-                    logger.info(f"Social Media parser for {source['source_url']} found no new news.")
-            
-            if news_data:
-                # Set user_id_for_source to None for automatically parsed news so they go to 'pending' moderation
-                news_data.update({'source_id': source['id'], 'source_name': source['source_name'], 'source_type': source['source_type'], 'user_id_for_source': None})
-                added_news_item = await add_news_to_db(news_data)
-                if added_news_item:
-                    await update_source_stats_publication_count(source['id'])
-                    logger.info(get_message('uk', 'news_added_success', title=added_news_item.title))
-                else:
-                    logger.info(get_message('uk', 'news_not_added', name=source['source_name']))
-                
-                async with pool.connection() as conn_update:
-                    async with conn_update.cursor() as cur_update:
-                        await cur_update.execute("UPDATE sources SET last_parsed = CURRENT_TIMESTAMP WHERE id = %s", (source['id'],))
-                        await conn_update.commit()
-                logger.info(get_message('uk', 'source_last_parsed_updated', name=source['source_name']))
-            else:
-                logger.warning(get_message('uk', 'source_parsing_warning', name=source['source_name'], url=source['source_url']))
-        except Exception as e:
-            logger.error(get_message('uk', 'source_parsing_error', name=source.get('source_name', 'N/A'), url=source.get('source_url', 'N/A'), error=e), exc_info=True)
-    
-    news_to_post = await get_news_to_publish(limit=1)
-    if news_to_post:
-        news_item = news_to_post[0]
-        await send_news_to_channel(news_item)
-    else:
-        logger.info("No approved news to post to channel.")
-
 async def delete_expired_news_task():
+    # Deletes news items that have passed their expiration date.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -1499,6 +1525,7 @@ async def delete_expired_news_task():
                 logger.info(get_message('uk', 'no_expired_news'))
 
 async def send_daily_digest():
+    # Sends a daily news digest to users who have auto-notifications enabled.
     logger.info("Running send_daily_digest task.")
     pool = await get_db_pool()
     async with pool.connection() as conn:
@@ -1533,9 +1560,11 @@ async def send_daily_digest():
             logger.error(get_message('uk', 'daily_digest_send_error', user_id=user_telegram_id, error=e), exc_info=True)
 
 async def generate_invite_code() -> str:
+    # Generates a random 8-character invite code.
     return ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=8))
 
 async def create_invite(inviter_user_db_id: int) -> Optional[str]:
+    # Creates a new invite code for a user.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         # Explicitly set row_factory for this cursor to ensure dictionary return
@@ -1550,6 +1579,8 @@ async def create_invite(inviter_user_db_id: int) -> Optional[str]:
                 return None
 
 async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: str, chat_id: int):
+    # Handles the processing of an invite code when a new user starts the bot.
+    # Grants premium/digest benefits to the inviter if criteria are met.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         # Explicitly set row_factory for this cursor to ensure dictionary return
@@ -1583,6 +1614,7 @@ async def handle_invite_code(new_user_db_id: int, invite_code: str, user_lang: s
 
 @router.callback_query(F.data == "invite_friends")
 async def command_invite_handler(callback: CallbackQuery):
+    # Handles the 'invite_friends' callback, generating and displaying an invite code.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     if not user:
@@ -1599,6 +1631,7 @@ async def command_invite_handler(callback: CallbackQuery):
     await callback.answer()
 
 async def update_source_stats_publication_count(source_id: int):
+    # Updates the publication count for a given source in source_stats.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -1607,6 +1640,7 @@ async def update_source_stats_publication_count(source_id: int):
 
 @router.callback_query(F.data == "ask_expert")
 async def handle_ask_expert(callback: CallbackQuery):
+    # Handles the 'ask_expert' callback, displaying expert selection options.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ask_expert_prompt'), reply_markup=get_expert_selection_keyboard(user_lang))
@@ -1614,6 +1648,7 @@ async def handle_ask_expert(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("ask_expert_"))
 async def handle_expert_selection(callback: CallbackQuery, state: FSMContext):
+    # Handles the selection of an expert and prompts for a question.
     expert_type = callback.data.replace("ask_expert_", "")
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1625,6 +1660,7 @@ async def handle_expert_selection(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_expert_question)
 async def process_expert_question(message: Message, state: FSMContext):
+    # Processes the user's question and generates an AI response from the selected expert.
     user_question = message.text
     user_data = await state.get_data()
     expert_type = user_data.get("expert_type")
@@ -1646,6 +1682,7 @@ async def process_expert_question(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "price_analysis_menu")
 async def handle_price_analysis_menu(callback: CallbackQuery):
+    # Displays the price analysis menu.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'price_analysis_prompt'), reply_markup=get_price_analysis_keyboard(user_lang))
@@ -1653,6 +1690,7 @@ async def handle_price_analysis_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "init_price_analysis")
 async def handle_init_price_analysis(callback: CallbackQuery, state: FSMContext):
+    # Initiates the price analysis process, prompting for user input.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'price_analysis_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1661,6 +1699,8 @@ async def handle_init_price_analysis(callback: CallbackQuery, state: FSMContext)
 
 @router.message(AIAssistant.waiting_for_price_analysis_input)
 async def process_price_analysis_input(message: Message, state: FSMContext):
+    # Processes user input (text and/or image) for price analysis.
+    # Uses Google Search and Gemini API for analysis.
     user_input = message.text
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1672,7 +1712,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
         file_path = file.file_path
         image_bytes = io.BytesIO()
         await bot.download_file(file_path, destination=image_bytes)
-        image_data_base64 = base64.b64encode(image_bytes.getvalue()).decode('utf-8')
+        image_data_base66 = base64.b64encode(image_bytes.getvalue()).decode('utf-8')
         logger.info(f"Received image for price analysis. Size: {len(image_data_base64)} bytes.")
 
     await message.answer(get_message(user_lang, 'price_analysis_generating'))
@@ -1681,6 +1721,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
     if image_data_base64:
         search_query = f"розпізнати товар та ціна {user_input} купити Україна"
 
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"price {user_input} buy Ukraine"])
     
     price_context = []
@@ -1700,6 +1741,7 @@ async def process_price_analysis_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "help_sell")
 async def handle_help_sell(callback: CallbackQuery):
+    # Provides information on how to sell.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(
@@ -1711,6 +1753,7 @@ async def handle_help_sell(callback: CallbackQuery):
 
 @router.callback_query(F.data == "help_buy")
 async def handle_help_buy(callback: CallbackQuery):
+    # Provides information on how to buy.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(
@@ -1722,6 +1765,7 @@ async def handle_help_buy(callback: CallbackQuery):
 
 @router.callback_query(F.data == "ai_media_menu")
 async def handle_ai_media_menu(callback: CallbackQuery):
+    # Displays the AI media menu.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_media_menu_prompt'), reply_markup=get_ai_media_menu_keyboard(user_lang))
@@ -1729,6 +1773,7 @@ async def handle_ai_media_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "youtube_to_news")
 async def handle_youtube_to_news(callback: CallbackQuery, state: FSMContext):
+    # Initiates the YouTube to news conversion process.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'youtube_url_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1737,6 +1782,7 @@ async def handle_youtube_to_news(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_youtube_url)
 async def process_youtube_url(message: Message, state: FSMContext):
+    # Processes a YouTube URL, generates a news summary, and adds it to the database.
     youtube_url = message.text
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1748,6 +1794,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
     await message.answer(get_message(user_lang, 'youtube_processing'))
     
     search_query = f"YouTube video summary {youtube_url}"
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=[search_query, f"YouTube {youtube_url} transcript summary"])
     
     transcript_context = []
@@ -1790,6 +1837,7 @@ async def process_youtube_url(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "create_filtered_channel")
 async def handle_create_filtered_channel(callback: CallbackQuery, state: FSMContext):
+    # Initiates the process of creating a filtered channel.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'filtered_channel_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1798,6 +1846,7 @@ async def handle_create_filtered_channel(callback: CallbackQuery, state: FSMCont
 
 @router.message(AIAssistant.waiting_for_filtered_channel_details)
 async def process_filtered_channel_details(message: Message, state: FSMContext):
+    # Processes details for creating a filtered channel and adds user subscriptions.
     details = message.text.split(',')
     if len(details) < 2:
         await message.answer(get_message('uk', 'filtered_channel_prompt'))
@@ -1818,6 +1867,7 @@ async def process_filtered_channel_details(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "create_ai_media")
 async def handle_create_ai_media(callback: CallbackQuery, state: FSMContext):
+    # Initiates the process of creating an AI media.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'ai_media_creating'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -1826,6 +1876,7 @@ async def handle_create_ai_media(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AIAssistant.waiting_for_ai_media_name)
 async def process_ai_media_name(message: Message, state: FSMContext):
+    # Processes the name for the AI media and provides a confirmation message.
     media_name = message.text.strip()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -1839,6 +1890,7 @@ async def process_ai_media_name(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "analytics_menu")
 async def handle_analytics_menu(callback: CallbackQuery):
+    # Displays the analytics menu.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'analytics_menu_prompt'), reply_markup=get_analytics_menu_keyboard(user_lang))
@@ -1846,6 +1898,7 @@ async def handle_analytics_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "infographics")
 async def handle_infographics(callback: CallbackQuery):
+    # Generates a description of an infographic based on current trends.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1858,6 +1911,7 @@ async def handle_infographics(callback: CallbackQuery):
         "новини економіки статистика",
         "тренди технологій"
     ]
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
     data_context = []
@@ -1877,6 +1931,7 @@ async def handle_infographics(callback: CallbackQuery):
 
 @router.callback_query(F.data == "trust_index")
 async def handle_trust_index(callback: CallbackQuery):
+    # Calculates and describes a 'Trust Index' for news sources.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1888,6 +1943,7 @@ async def handle_trust_index(callback: CallbackQuery):
         "новини про довіру до ЗМІ",
         "репутація новинних агенцій"
     ]
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
     trust_context = []
@@ -1907,6 +1963,7 @@ async def handle_trust_index(callback: CallbackQuery):
 
 @router.callback_query(F.data == "long_term_connections")
 async def handle_long_term_connections(callback: CallbackQuery):
+    # Identifies and describes long-term connections between events.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1918,6 +1975,7 @@ async def handle_long_term_connections(callback: CallbackQuery):
         "історичні передумови сучасних подій",
         "взаємозв'язок світових криз"
     ]
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
     historical_context = []
@@ -1937,6 +1995,7 @@ async def handle_long_term_connections(callback: CallbackQuery):
 
 @router.callback_query(F.data == "ai_prediction")
 async def handle_ai_prediction(callback: CallbackQuery):
+    # Generates an AI prediction based on current events and analysis.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1949,6 +2008,7 @@ async def handle_ai_prediction(callback: CallbackQuery):
         "прогнози розвитку технологій",
         "майбутнє світової економіки"
     ]
+    # Using google_search tool to find relevant information
     search_results = await asyncio.to_thread(google_search.search, queries=search_queries)
     
     prediction_context = []
@@ -1968,6 +2028,7 @@ async def handle_ai_prediction(callback: CallbackQuery):
 
 @router.callback_query(F.data == "donate")
 async def handle_donate_command(callback: CallbackQuery):
+    # Handles the 'donate' callback, displaying donation information.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1980,6 +2041,7 @@ async def handle_donate_command(callback: CallbackQuery):
 
 @router.callback_query(F.data == "subscribe_menu")
 async def handle_subscribe_menu(callback: CallbackQuery):
+    # Displays the subscription management menu.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     
@@ -1996,6 +2058,7 @@ async def handle_subscribe_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "add_subscription")
 async def handle_add_subscription(callback: CallbackQuery, state: FSMContext):
+    # Initiates the process of adding new topic subscriptions.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'add_subscription_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2004,6 +2067,7 @@ async def handle_add_subscription(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SubscriptionStates.waiting_for_topics_to_add)
 async def process_topics_to_add(message: Message, state: FSMContext):
+    # Processes the topics provided by the user for subscription.
     topics_raw = message.text
     topics = [t.strip().lower() for t in topics_raw.split(',') if t.strip()]
     user = await get_user_by_telegram_id(message.from_user.id)
@@ -2017,6 +2081,7 @@ async def process_topics_to_add(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "remove_subscription")
 async def handle_remove_subscription(callback: CallbackQuery, state: FSMContext):
+    # Initiates the process of removing a topic subscription.
     user = await get_user_by_telegram_id(callback.from_user.id)
     user_lang = user.language if user else 'uk'
     await callback.message.edit_text(get_message(user_lang, 'remove_subscription_prompt'), reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text=get_message(user_lang, 'cancel_btn'), callback_data="cancel_action")).as_markup())
@@ -2025,6 +2090,7 @@ async def handle_remove_subscription(callback: CallbackQuery, state: FSMContext)
 
 @router.message(SubscriptionStates.waiting_for_topic_to_remove)
 async def process_topic_to_remove(message: Message, state: FSMContext):
+    # Processes the topic provided by the user for removal from subscriptions.
     topic_to_remove = message.text.strip().lower()
     user = await get_user_by_telegram_id(message.from_user.id)
     user_lang = user.language if user else 'uk'
@@ -2037,45 +2103,21 @@ async def process_topic_to_remove(message: Message, state: FSMContext):
         await message.answer(get_message(user_lang, 'subscription_not_found', topic=topic_to_remove), reply_markup=get_subscription_menu_keyboard(user_lang))
     await state.clear()
 
-async def scheduler():
-    fetch_schedule_expression = '*/5 * * * *'
-    delete_schedule_expression = '0 */5 * * *'
-    daily_digest_schedule_expression = '0 9 * * *'
+@router.message(Command("parse_now"))
+async def command_parse_now_handler(message: Message):
+    # Manually triggers the news parsing and posting task.
+    user = await get_user_by_telegram_id(message.from_user.id)
+    user_lang = user.language if user else 'uk'
+    
+    await message.answer(get_message(user_lang, 'parse_now_started'))
+    asyncio.create_task(fetch_and_post_news_task(bot))
+    await message.answer(get_message(user_lang, 'parse_now_completed'), reply_markup=get_main_menu_keyboard(user_lang))
 
-    while True:
-        now = datetime.now(timezone.utc)
-        
-        fetch_itr = croniter(fetch_schedule_expression, now)
-        next_fetch_run = fetch_itr.get_next(datetime)
-        fetch_delay_seconds = (next_fetch_run - now).total_seconds()
-
-        delete_itr = croniter(delete_schedule_expression, now)
-        next_delete_run = delete_itr.get_next(datetime)
-        delete_delay_seconds = (next_delete_run - now).total_seconds()
-
-        daily_digest_itr = croniter(daily_digest_schedule_expression, now)
-        next_daily_digest_run = daily_digest_itr.get_next(datetime)
-        daily_digest_delay_seconds = (next_daily_digest_run - now).total_seconds()
-        
-        min_delay = min(fetch_delay_seconds, delete_delay_seconds, daily_digest_delay_seconds)
-        
-        logger.info(f"Next fetch_and_post_news_task in {int(fetch_delay_seconds)}s.")
-        logger.info(f"Next delete_expired_news_task in {int(delete_delay_seconds)}s.")
-        logger.info(f"Next send_daily_digest in {int(daily_digest_delay_seconds)}s.")
-        logger.info(f"Bot sleeping for {int(min_delay)}s.")
-
-        await asyncio.sleep(max(1, int(min_delay)))
-
-        current_utc_time = datetime.now(timezone.utc)
-        if (current_utc_time - next_fetch_run).total_seconds() >= -1:
-            asyncio.create_task(fetch_and_post_news_task())
-        if (current_utc_time - next_delete_run).total_seconds() >= -1:
-            asyncio.create_task(delete_expired_news_task())
-        if (current_utc_time - next_daily_digest_run).total_seconds() >= -1:
-            asyncio.create_task(send_daily_digest())
 
 @app.on_event("startup")
 async def on_startup():
+    # Startup event handler for the FastAPI application.
+    # Sets webhook and starts the custom scheduler.
     webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
         render_external_url = os.getenv("RENDER_EXTERNAL_HOSTNAME")
@@ -2090,11 +2132,14 @@ async def on_startup():
     except Exception as e:
         logger.error(f"Error setting webhook: {e}", exc_info=True)
     
-    asyncio.create_task(scheduler())
+    # Setup the APScheduler jobs here after bot is initialized
+    setup_scheduler(bot)
     logger.info("FastAPI app started.")
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    # Shutdown event handler for the FastAPI application.
+    # Closes database pool and bot session.
     if db_pool:
         await db_pool.close()
     logger.info("DB pool closed.")
@@ -2103,6 +2148,7 @@ async def on_shutdown():
 
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
+    # Endpoint for Telegram webhook updates.
     try:
         update = await request.json()
         aiogram_update = types.Update.model_validate(update, context={"bot": bot})
@@ -2113,6 +2159,7 @@ async def telegram_webhook(request: Request):
 
 @app.post("/")
 async def root_webhook(request: Request):
+    # Root endpoint for Telegram webhook updates (fallback).
     try:
         update = await request.json()
         aiogram_update = types.Update.model_validate(update, context={"bot": bot})
@@ -2123,24 +2170,29 @@ async def root_webhook(request: Request):
 
 @app.get("/healthz", response_class=PlainTextResponse)
 async def healthz():
+    # Health check endpoint.
     return "OK"
 
 @app.get("/ping", response_class=PlainTextResponse)
 async def ping():
+    # Ping endpoint.
     return "pong"
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
+    # Serves the index.html file.
     with open("index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def read_dashboard(api_key: str = Depends(get_api_key)):
+    # Serves the dashboard.html file, protected by API key.
     with open("dashboard.html", "r", encoding="utf-8") as f:
         return f.read()
 
 @app.get("/users", response_class=HTMLResponse)
 async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    # Retrieves a list of users for the admin dashboard.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2149,6 +2201,7 @@ async def read_users(api_key: str = Depends(get_api_key), limit: int = 10, offse
 
 @app.get("/reports", response_class=HTMLResponse)
 async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, offset: int = 0):
+    # Retrieves a list of reports for the admin dashboard.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2158,14 +2211,16 @@ async def read_reports(api_key: str = Depends(get_api_key), limit: int = 10, off
 
 @app.get("/api/admin/sources")
 async def get_admin_sources(api_key: str = Depends(get_api_key), limit: int = 100, offset: int = 0):
+    # Retrieves a list of sources for the admin dashboard.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT id, user_id, source_name, source_url, source_type, status, added_at, last_parsed, parse_frequency FROM sources ORDER BY added_at DESC LIMIT %s OFFSET %s;", (limit, offset))
+            await cur.execute("SELECT id, user_id, source_name, source_url, normalized_source_url, source_type, status, added_at, last_parsed, parse_frequency FROM sources ORDER BY added_at DESC LIMIT %s OFFSET %s;", (limit, offset))
             return [Source(**s) for s in await cur.fetchall()]
 
 @app.get("/api/admin/stats")
 async def get_admin_stats(api_key: str = Depends(get_api_key)):
+    # Retrieves general statistics for the admin dashboard.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2179,6 +2234,7 @@ async def get_admin_stats(api_key: str = Depends(get_api_key)):
 
 @app.get("/api/admin/news")
 async def get_admin_news(api_key: str = Depends(api_key_header), limit: int = 10, offset: int = 0, status: Optional[str] = None):
+    # Retrieves a list of news items for the admin dashboard, with optional status filtering.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2194,6 +2250,7 @@ async def get_admin_news(api_key: str = Depends(api_key_header), limit: int = 10
 
 @app.get("/api/admin/news/counts_by_status")
 async def get_news_counts_by_status(api_key: str = Depends(api_key_header)):
+    # Retrieves the count of news items grouped by moderation status.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2202,6 +2259,7 @@ async def get_news_counts_by_status(api_key: str = Depends(api_key_header)):
 
 @app.put("/api/admin/news/{news_id}")
 async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api_key_header)):
+    # Updates a specific news item in the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2215,6 +2273,7 @@ async def update_admin_news(news_id: int, news: News, api_key: str = Depends(api
 
 @app.delete("/api/admin/news/{news_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_admin_news_api(news_id: int, api_key: str = Depends(api_key_header)):
+    # Deletes a specific news item from the database.
     pool = await get_db_pool()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -2228,6 +2287,10 @@ if __name__ == "__main__":
     if not os.getenv("WEBHOOK_URL"):
         logger.info("WEBHOOK_URL not set. Running bot in polling mode.")
         async def start_polling():
-            await dp.start_polling(bot)
+            # Initialize bot here for polling mode
+            polling_bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+            # Setup APScheduler jobs for polling mode
+            setup_scheduler(polling_bot)
+            await dp.start_polling(polling_bot)
         asyncio.run(start_polling())
     uvicorn.run(app, host="0.0.0.0", port=8000)

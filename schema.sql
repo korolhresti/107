@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS sources (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, -- Може бути NULL для системних джерел
     source_name TEXT NOT NULL,
-    source_url TEXT UNIQUE NOT NULL,
+    source_url TEXT NOT NULL,
+    normalized_source_url TEXT UNIQUE NOT NULL, -- Додано для унікальності та нормалізації
     source_type TEXT NOT NULL, -- 'web', 'rss', 'telegram', 'social_media'
     status TEXT DEFAULT 'active', -- 'active', 'inactive'
     added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS news (
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     source_url TEXT NOT NULL,
+    normalized_source_url TEXT UNIQUE NOT NULL, -- Додано для унікальності та нормалізації
     image_url TEXT, -- Може бути NULL
     ai_summary TEXT, -- Може бути NULL
     ai_classified_topics JSONB, -- Зберігаємо як JSONB для гнучкості списку тем
